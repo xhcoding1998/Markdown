@@ -15,6 +15,7 @@ const defaultSettings: AppSettings = {
 }
 
 const desktopSessionKey = 'md-lai-le-desktop-session'
+const webSessionKey = 'md-lai-le-web-session'
 const settingsKey = 'md-lai-le-settings'
 const legacySettingsKey = 'markdown-studio-settings'
 const viewModeKey = 'md-lai-le-view-mode'
@@ -45,12 +46,12 @@ export const useStudioStore = defineStore('studio', () => {
   const standalonePaths = new Set<string>()
 
   function persistDesktopSession() {
-    if (!desktop.isTauri()) return
+    const sessionKey = desktop.isTauri() ? desktopSessionKey : webSessionKey
     if (!workspacePath.value) {
-      localStorage.removeItem(desktopSessionKey)
+      localStorage.removeItem(sessionKey)
       return
     }
-    localStorage.setItem(desktopSessionKey, JSON.stringify({
+    localStorage.setItem(sessionKey, JSON.stringify({
       workspacePath: workspacePath.value,
       workspaceName: workspaceName.value,
       workspaceMode: workspaceMode.value,
@@ -135,14 +136,23 @@ export const useStudioStore = defineStore('studio', () => {
     loading.value = true
     try {
       const result = await web.initialize()
+      let restoredActivePath = ''
+      try {
+        const stored = localStorage.getItem(webSessionKey)
+        const session = stored ? JSON.parse(stored) as { workspacePath?: string; activePath?: string } : null
+        if (session?.workspacePath === result.name) restoredActivePath = session.activePath || ''
+      } catch {
+        localStorage.removeItem(webSessionKey)
+      }
       workspacePath.value = result.name
       workspaceName.value = result.name
       workspaceMode.value = result.mode
       standalonePaths.clear()
       if (result.mode === 'files') flattenFiles(result.tree).forEach((node) => standalonePaths.add(node.relativePath))
       tree.value = scopedTree(result.tree)
-      const first = findFirstFile(tree.value)
-      if (first) await openFile(first)
+      const active = findNode(tree.value, restoredActivePath) || findFirstFile(tree.value)
+      if (active) await openFile(active)
+      else persistDesktopSession()
     } catch (error) {
       errorMessage.value = readableError(error)
     } finally {
@@ -398,6 +408,7 @@ export const useStudioStore = defineStore('studio', () => {
     saveStatus.value = 'saved'
     queueMicrotask(() => { suppressWatch = false })
     localStorage.removeItem(desktopSessionKey)
+    localStorage.removeItem(webSessionKey)
   }
 
   async function performSearch(query: string) {
