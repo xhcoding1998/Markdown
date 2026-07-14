@@ -18,7 +18,16 @@ const DETACHED_KEY = 'workspace-detached'
 
 let mode: 'virtual' | 'directory' = 'virtual'
 let directoryHandle: FileSystemDirectoryHandle | undefined
-let virtualWorkspace: VirtualWorkspace = { name: '码档目录', entries: [] }
+let virtualWorkspace: VirtualWorkspace = { name: '', entries: [] }
+
+const legacyDemoFiles = new Set([
+  '产品文档/产品需求文档.md',
+  '产品文档/功能清单.md',
+  '产品文档/用户故事.md',
+  '技术文档/接口文档.md',
+  '技术文档/数据库设计.md',
+  '会议记录/产品周会 2026-07-13.md',
+])
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -68,7 +77,7 @@ export function isDirectoryWorkspace() {
   return mode === 'directory'
 }
 
-export async function initialize(seedFiles: Array<{ path: string; content: string }>) {
+export async function initialize() {
   const detached = await databaseGet<boolean>(DETACHED_KEY).catch(() => false)
   if (detached) {
     mode = 'virtual'
@@ -86,18 +95,21 @@ export async function initialize(seedFiles: Array<{ path: string; content: strin
   }
 
   const saved = await databaseGet<VirtualWorkspace>(VIRTUAL_KEY).catch(() => undefined)
-  virtualWorkspace = saved || {
-    name: '码档目录',
-    entries: seedFiles.flatMap(({ path, content }) => {
-      const parts = path.split('/')
-      const directories = parts.slice(0, -1).map((_, index) => ({ path: parts.slice(0, index + 1).join('/'), kind: 'directory' as const }))
-      return [...directories, { path, kind: 'file' as const, content }]
-    }).filter((entry, index, entries) => entries.findIndex((candidate) => candidate.path === entry.path) === index),
+  if (!saved || isLegacyDemoWorkspace(saved)) {
+    virtualWorkspace = { name: '', entries: [] }
+    if (saved) await databaseDelete(VIRTUAL_KEY).catch(() => undefined)
+    return { name: '', tree: [] as FileNode[] }
   }
+  virtualWorkspace = saved
   mode = 'virtual'
   directoryHandle = undefined
-  await persistVirtualWorkspace()
   return { name: virtualWorkspace.name, tree: buildVirtualTree() }
+}
+
+function isLegacyDemoWorkspace(workspace: VirtualWorkspace) {
+  if (workspace.name !== '码档目录') return false
+  const files = workspace.entries.filter((entry) => entry.kind === 'file')
+  return files.length === legacyDemoFiles.size && files.every((entry) => legacyDemoFiles.has(entry.path))
 }
 
 export async function chooseDirectory() {

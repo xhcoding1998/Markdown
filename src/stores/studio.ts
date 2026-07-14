@@ -4,65 +4,6 @@ import type { AppSettings, FileNode, SaveStatus, SearchResult, ThemeMode, TrashI
 import * as desktop from '../services/desktop'
 import * as web from '../services/webWorkspace'
 
-const demoContent = `# 码档产品需求文档
-
-## 1. 产品概述
-
-码档是一款专注写作体验的本地 Markdown 编辑器，支持实时预览、大纲导航和全文搜索。
-
-> 让写作更专注，让内容始终掌握在自己手中。
-
-## 2. 核心功能
-
-- 📝 实时编辑与预览
-- 📁 本地目录管理
-- 🔎 文档全文搜索
-- 🧭 标题大纲导航
-- 🌙 深色主题
-
-## 3. 功能清单
-
-| 完成度 | 功能 |
-| --- | --- |
-| ✅ | Markdown 语法高亮 |
-| ✅ | 代码块高亮 |
-| ✅ | 表格与任务列表 |
-| ⬜ | 数学公式支持 |
-
-\`\`\`ts
-function hello(name: string) {
-  console.log(\`Hello, \${name}!\`)
-}
-
-hello('码档')
-\`\`\`
-
-## 4. 写作体验
-
-所有文件都直接存储在你的电脑中，不需要注册账户，也不会上传任何内容。
-`
-
-const demoTree: FileNode[] = [
-  {
-    name: '产品文档', path: '产品文档', relativePath: '产品文档', kind: 'directory', children: [
-      { name: '产品需求文档.md', path: '产品文档/产品需求文档.md', relativePath: '产品文档/产品需求文档.md', kind: 'file' },
-      { name: '功能清单.md', path: '产品文档/功能清单.md', relativePath: '产品文档/功能清单.md', kind: 'file' },
-      { name: '用户故事.md', path: '产品文档/用户故事.md', relativePath: '产品文档/用户故事.md', kind: 'file' },
-    ],
-  },
-  {
-    name: '技术文档', path: '技术文档', relativePath: '技术文档', kind: 'directory', children: [
-      { name: '接口文档.md', path: '技术文档/接口文档.md', relativePath: '技术文档/接口文档.md', kind: 'file' },
-      { name: '数据库设计.md', path: '技术文档/数据库设计.md', relativePath: '技术文档/数据库设计.md', kind: 'file' },
-    ],
-  },
-  {
-    name: '会议记录', path: '会议记录', relativePath: '会议记录', kind: 'directory', children: [
-      { name: '产品周会 2026-07-13.md', path: '会议记录/产品周会 2026-07-13.md', relativePath: '会议记录/产品周会 2026-07-13.md', kind: 'file' },
-    ],
-  },
-]
-
 const defaultSettings: AppSettings = {
   theme: 'light',
   fontSize: 15,
@@ -193,7 +134,7 @@ export const useStudioStore = defineStore('studio', () => {
     }
     loading.value = true
     try {
-      const result = await web.initialize(flattenFiles(demoTree).map((node) => ({ path: node.relativePath, content: demoContent })))
+      const result = await web.initialize()
       workspacePath.value = result.name
       workspaceName.value = result.name
       tree.value = result.tree
