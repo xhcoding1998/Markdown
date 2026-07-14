@@ -126,10 +126,30 @@ function goToSourceLine(event: Event) {
   jumpTimer = window.setTimeout(() => target.classList.remove('preview-jump-highlight'), 1250)
 }
 
-onMounted(() => window.addEventListener('studio:goto-line', goToSourceLine))
+function followCursorLine(event: Event) {
+  const requested = (event as CustomEvent<number>).detail
+  const target = sourceBlockAtLine(requested)
+  if (target) target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+
+function sourceBlockAtLine(requested: number) {
+  if (!article.value || !Number.isFinite(requested)) return undefined
+  const blocks = [...article.value.querySelectorAll<HTMLElement>('[data-source-line]')]
+  return blocks.reduce<HTMLElement | undefined>((closest, block) => {
+    const line = Number(block.dataset.sourceLine || 0)
+    if (line > requested) return closest
+    return !closest || line >= Number(closest.dataset.sourceLine || 0) ? block : closest
+  }, undefined) || blocks[0]
+}
+
+onMounted(() => {
+  window.addEventListener('studio:goto-line', goToSourceLine)
+  window.addEventListener('studio:cursor-line', followCursorLine)
+})
 onBeforeUnmount(() => {
   window.clearTimeout(jumpTimer)
   window.removeEventListener('studio:goto-line', goToSourceLine)
+  window.removeEventListener('studio:cursor-line', followCursorLine)
 })
 
 </script>

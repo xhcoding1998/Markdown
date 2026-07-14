@@ -1,7 +1,7 @@
 import type { FileNode, SearchResult } from '../types'
 
 type VirtualEntry = { path: string; kind: 'file' | 'directory'; content?: string; createdAt?: number; modifiedAt?: number }
-type VirtualWorkspace = { name: string; entries: VirtualEntry[] }
+type VirtualWorkspace = { name: string; scope?: 'files' | 'directory'; entries: VirtualEntry[] }
 type PermissionDirectoryHandle = FileSystemDirectoryHandle & {
   queryPermission(options?: { mode: 'readwrite' }): Promise<PermissionState>
   requestPermission(options?: { mode: 'readwrite' }): Promise<PermissionState>
@@ -18,7 +18,7 @@ const DETACHED_KEY = 'workspace-detached'
 
 let mode: 'virtual' | 'directory' = 'virtual'
 let directoryHandle: FileSystemDirectoryHandle | undefined
-let virtualWorkspace: VirtualWorkspace = { name: '', entries: [] }
+let virtualWorkspace: VirtualWorkspace = { name: '', scope: 'directory', entries: [] }
 
 const legacyDemoFiles = new Set([
   '产品文档/产品需求文档.md',
@@ -82,7 +82,7 @@ export async function initialize() {
   if (detached) {
     mode = 'virtual'
     directoryHandle = undefined
-    return { name: '', tree: [] as FileNode[] }
+    return { name: '', mode: 'directory' as const, tree: [] as FileNode[] }
   }
   const savedHandle = await databaseGet<FileSystemDirectoryHandle>(HANDLE_KEY).catch(() => undefined)
   if (savedHandle) {
@@ -90,20 +90,21 @@ export async function initialize() {
     if (permission === 'granted') {
       mode = 'directory'
       directoryHandle = savedHandle
-      return { name: savedHandle.name, tree: await scanDirectory(savedHandle) }
+      return { name: savedHandle.name, mode: 'directory' as const, tree: await scanDirectory(savedHandle) }
     }
   }
 
   const saved = await databaseGet<VirtualWorkspace>(VIRTUAL_KEY).catch(() => undefined)
   if (!saved || isLegacyDemoWorkspace(saved)) {
-    virtualWorkspace = { name: '', entries: [] }
+    virtualWorkspace = { name: '', scope: 'directory', entries: [] }
     if (saved) await databaseDelete(VIRTUAL_KEY).catch(() => undefined)
-    return { name: '', tree: [] as FileNode[] }
+    return { name: '', mode: 'directory' as const, tree: [] as FileNode[] }
   }
   virtualWorkspace = saved
+  virtualWorkspace.scope ||= virtualWorkspace.name === '默认文件' ? 'files' : 'directory'
   mode = 'virtual'
   directoryHandle = undefined
-  return { name: virtualWorkspace.name, tree: buildVirtualTree() }
+  return { name: virtualWorkspace.name, mode: virtualWorkspace.scope, tree: buildVirtualTree() }
 }
 
 function isLegacyDemoWorkspace(workspace: VirtualWorkspace) {
@@ -128,7 +129,7 @@ export async function chooseDirectory() {
     directoryHandle = handle
     await databasePut(DETACHED_KEY, false)
     await databasePut(HANDLE_KEY, handle)
-    return { name: handle.name, tree: await scanDirectory(handle) }
+    return { name: handle.name, mode: 'directory' as const, tree: await scanDirectory(handle) }
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return null
     if (error instanceof DOMException && (error.name === 'SecurityError' || error.name === 'NotAllowedError')) {
@@ -190,11 +191,11 @@ async function openDirectoryFiles(files: File[]) {
 
   mode = 'virtual'
   directoryHandle = undefined
-  virtualWorkspace = { name: rootName, entries }
+  virtualWorkspace = { name: rootName, scope: 'directory', entries }
   await databasePut(DETACHED_KEY, false)
   await databaseDelete(HANDLE_KEY).catch(() => undefined)
   await persistVirtualWorkspace()
-  return { name: virtualWorkspace.name, tree: buildVirtualTree() }
+  return { name: virtualWorkspace.name, mode: 'directory' as const, tree: buildVirtualTree() }
 }
 
 export function chooseMarkdownFiles(): Promise<File[] | null> {
@@ -224,6 +225,7 @@ export async function openMarkdownFiles(files: File[]) {
   directoryHandle = undefined
   virtualWorkspace = {
     name: '默认文件',
+    scope: 'files',
     entries: files.map((file) => ({
       path: file.name,
       kind: 'file' as const,
@@ -239,7 +241,7 @@ export async function openMarkdownFiles(files: File[]) {
   await databasePut(DETACHED_KEY, false)
   await databaseDelete(HANDLE_KEY).catch(() => undefined)
   await persistVirtualWorkspace()
-  return { name: virtualWorkspace.name, tree: buildVirtualTree() }
+  return { name: virtualWorkspace.name, mode: 'files' as const, tree: buildVirtualTree() }
 }
 
 export async function detachWorkspace() {

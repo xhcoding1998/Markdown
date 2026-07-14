@@ -172,6 +172,10 @@ function goToHeading(heading: Heading) {
   window.dispatchEvent(new CustomEvent('studio:goto-line', { detail: heading.line }))
 }
 
+function followEditorCursor(line: number) {
+  window.dispatchEvent(new CustomEvent('studio:cursor-line', { detail: line }))
+}
+
 function selectViewMode(mode: 'editor' | 'split' | 'preview') {
   if (!activePath.value) return
   viewMode.value = mode
@@ -867,7 +871,7 @@ onBeforeUnmount(() => {
 
         <div ref="editorStage" class="editor-stage" :class="`mode-${viewMode}`" :style="splitStyle">
           <div v-show="viewMode !== 'preview'" class="editor-pane">
-            <MarkdownEditor v-model="content" :dark="dark" :font-size="settings.fontSize" :tab-size="settings.tabSize" @format-state="formatState = $event" />
+            <MarkdownEditor v-model="content" :dark="dark" :font-size="settings.fontSize" :tab-size="settings.tabSize" @format-state="formatState = $event" @cursor-line="followEditorCursor" />
           </div>
           <div v-if="viewMode === 'split'" class="split-handle" title="拖动调整编辑和预览宽度" @pointerdown="startSplitResize"><span /></div>
           <div v-show="viewMode !== 'editor'" class="preview-pane"><MarkdownPreview :content="content" /></div>

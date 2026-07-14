@@ -11,6 +11,7 @@ const props = defineProps<{ modelValue: string; dark: boolean; fontSize: number;
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   'format-state': [value: Record<string, boolean>]
+  'cursor-line': [line: number]
 }>()
 
 const host = ref<HTMLElement>()
@@ -54,6 +55,13 @@ function extensions() {
     EditorView.updateListener.of((update) => {
       if (update.docChanged) emit('update:modelValue', update.state.doc.toString())
       if (update.docChanged || update.selectionSet) emitFormatState(update.view)
+      if (update.selectionSet && update.transactions.some((transaction) => transaction.isUserEvent('select'))) emitCursorLine(update.view)
+    }),
+    EditorView.domEventHandlers({
+      pointerup: (_event, editor) => {
+        window.setTimeout(() => emitCursorLine(editor), 0)
+        return false
+      },
     }),
     EditorView.theme({
       '&': { height: '100%', background: 'var(--bg-editor)', fontSize: `${props.fontSize}px` },
@@ -237,6 +245,11 @@ function emitFormatState(editor = view) {
     strike: isInlineActive('~~', '~~'), list: /^[-*+]\s(?!\[[ xX]\]\s)/.test(line.text),
     task: /^[-*+]\s\[[ xX]\]\s/.test(line.text), quote: /^>\s/.test(line.text), code: isInlineActive('```\n', '\n```'),
   })
+}
+
+function emitCursorLine(editor = view) {
+  if (!editor) return
+  emit('cursor-line', editor.state.doc.lineAt(editor.state.selection.main.head).number)
 }
 
 onMounted(() => {

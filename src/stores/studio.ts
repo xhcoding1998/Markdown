@@ -137,6 +137,7 @@ export const useStudioStore = defineStore('studio', () => {
       const result = await web.initialize()
       workspacePath.value = result.name
       workspaceName.value = result.name
+      workspaceMode.value = result.mode
       tree.value = result.tree
       const first = findFirstFile(tree.value)
       if (first) await openFile(first)
@@ -163,6 +164,8 @@ export const useStudioStore = defineStore('studio', () => {
       } else {
         const result = await web.chooseDirectory()
         if (!result) return false
+        standalonePaths.clear()
+        workspaceMode.value = 'directory'
         workspacePath.value = result.name
         workspaceName.value = result.name
         tree.value = result.tree
