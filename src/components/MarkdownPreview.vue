@@ -185,10 +185,21 @@ onBeforeUnmount(() => {
 .markdown-body a { color: var(--accent); text-decoration: none; }
 .markdown-body a:hover { text-decoration: underline; }
 .markdown-body hr { border: 0; border-top: 1px solid var(--border); margin: 32px 0; }
-.markdown-body .preview-jump-highlight { border-radius: 4px; animation: preview-target-highlight 1.2s ease-out; }
+.markdown-body .preview-jump-highlight { position: relative; z-index: 0; border-radius: 0; isolation: isolate; }
+.markdown-body .preview-jump-highlight::before {
+  position: absolute;
+  z-index: -1;
+  inset: -4px -10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-preview));
+  pointer-events: none;
+  content: '';
+  animation: preview-target-highlight 1.2s ease-out;
+}
 @keyframes preview-target-highlight {
-  0%, 28% { background: color-mix(in srgb, var(--accent) 22%, var(--bg-preview)); box-shadow: inset 3px 0 0 var(--accent); }
-  100% { background: transparent; box-shadow: inset 3px 0 0 transparent; }
+  0%, 28% { opacity: 1; }
+  100% { opacity: 0; }
 }
 @media (max-width: 900px) { .markdown-body { padding: 28px 28px 80px; } }
 </style>
