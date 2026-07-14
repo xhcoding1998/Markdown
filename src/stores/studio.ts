@@ -470,6 +470,18 @@ export const useStudioStore = defineStore('studio', () => {
       return
     }
     try {
+      if (!workspacePath.value) {
+        const result = await web.openMarkdownFiles(markdownFiles)
+        workspacePath.value = result.name
+        workspaceName.value = result.name
+        workspaceMode.value = 'files'
+        standalonePaths.clear()
+        result.tree.filter((node) => node.kind === 'file').forEach((node) => standalonePaths.add(node.relativePath))
+        tree.value = result.tree
+        const first = findFirstFile(tree.value)
+        if (first) await openFile(first)
+        return
+      }
       await web.importFiles(markdownFiles, targetDirectory)
       await refreshWorkspace()
       const firstImported = findNode(tree.value, targetDirectory ? `${targetDirectory}/${markdownFiles[0].name}` : markdownFiles[0].name)

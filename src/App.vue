@@ -610,14 +610,14 @@ function hasExternalFiles(event: DragEvent) {
 }
 
 function enterExternalDrag(event: DragEvent) {
-  if (!workspaceName.value || !hasExternalFiles(event)) return
+  if (!hasExternalFiles(event)) return
   event.preventDefault()
   dragDepth += 1
   dropActive.value = true
 }
 
 function overExternalDrag(event: DragEvent) {
-  if (!workspaceName.value || !hasExternalFiles(event) || !event.dataTransfer) return
+  if (!hasExternalFiles(event) || !event.dataTransfer) return
   event.preventDefault()
   event.dataTransfer.dropEffect = 'copy'
 }
@@ -629,7 +629,7 @@ function leaveExternalDrag(event: DragEvent) {
 }
 
 function dropExternalFiles(event: DragEvent) {
-  if (!workspaceName.value || !event.dataTransfer?.files.length) return
+  if (!event.dataTransfer?.files.length) return
   event.preventDefault()
   dragDepth = 0
   dropActive.value = false
