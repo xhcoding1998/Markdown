@@ -138,7 +138,9 @@ export const useStudioStore = defineStore('studio', () => {
       workspacePath.value = result.name
       workspaceName.value = result.name
       workspaceMode.value = result.mode
-      tree.value = result.tree
+      standalonePaths.clear()
+      if (result.mode === 'files') flattenFiles(result.tree).forEach((node) => standalonePaths.add(node.relativePath))
+      tree.value = scopedTree(result.tree)
       const first = findFirstFile(tree.value)
       if (first) await openFile(first)
     } catch (error) {
@@ -485,9 +487,12 @@ export const useStudioStore = defineStore('studio', () => {
         if (first) await openFile(first)
         return
       }
-      await web.importFiles(markdownFiles, targetDirectory)
+      const candidatePaths = markdownFiles.map((file) => targetDirectory ? `${targetDirectory}/${file.name}` : file.name)
+      const newFiles = markdownFiles.filter((_, index) => !findNode(tree.value, candidatePaths[index]))
+      if (newFiles.length) await web.importFiles(newFiles, targetDirectory)
+      if (workspaceMode.value === 'files') candidatePaths.forEach((path) => standalonePaths.add(path))
       await refreshWorkspace()
-      const firstImported = findNode(tree.value, targetDirectory ? `${targetDirectory}/${markdownFiles[0].name}` : markdownFiles[0].name)
+      const firstImported = findNode(tree.value, candidatePaths[0])
       if (firstImported) await openFile(firstImported)
     } catch (error) {
       errorMessage.value = readableError(error)
@@ -533,16 +538,30 @@ export const useStudioStore = defineStore('studio', () => {
         return
       }
 
-      await desktop.importFiles(markdownPaths, targetDirectory)
-      if (workspaceMode.value === 'files') {
-        markdownPaths.forEach((path) => {
-          const name = path.split(/[\\/]/).pop() || ''
-          if (name) standalonePaths.add(targetDirectory ? `${targetDirectory}/${name}` : name)
+      if (workspaceMode.value === 'files' && !targetDirectory) {
+        const pathsInsideCurrentFolder = markdownPaths
+          .map((path) => ({ source: path, relative: relativePathWithin(path, workspacePath.value) }))
+        const externalPaths = pathsInsideCurrentFolder.filter((item) => !item.relative).map((item) => item.source)
+        if (externalPaths.length) await desktop.importFiles(externalPaths, '')
+        pathsInsideCurrentFolder.forEach(({ source, relative }) => {
+          const name = source.split(/[\\/]/).pop() || ''
+          if (relative) standalonePaths.add(relative)
+          else if (name) standalonePaths.add(name)
         })
+      } else {
+        await desktop.importFiles(markdownPaths, targetDirectory)
+        if (workspaceMode.value === 'files') {
+          markdownPaths.forEach((path) => {
+            const name = path.split(/[\\/]/).pop() || ''
+            if (name) standalonePaths.add(targetDirectory ? `${targetDirectory}/${name}` : name)
+          })
+        }
       }
       await refreshWorkspace()
       const importedName = markdownPaths[0].split(/[\\/]/).pop() || ''
-      const importedPath = targetDirectory ? `${targetDirectory}/${importedName}` : importedName
+      const importedPath = workspaceMode.value === 'files' && !targetDirectory
+        ? relativePathWithin(markdownPaths[0], workspacePath.value) || importedName
+        : targetDirectory ? `${targetDirectory}/${importedName}` : importedName
       const imported = findNode(tree.value, importedPath)
       if (imported) await openFile(imported)
       persistDesktopSession()

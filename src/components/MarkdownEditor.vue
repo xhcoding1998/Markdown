@@ -12,6 +12,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
   'format-state': [value: Record<string, boolean>]
   'cursor-line': [line: number]
+  'drop-files': [files: FileList]
 }>()
 
 const host = ref<HTMLElement>()
@@ -61,6 +62,22 @@ function extensions() {
       pointerup: (_event, editor) => {
         window.setTimeout(() => emitCursorLine(editor), 0)
         return false
+      },
+      dragover: (event) => {
+        const dragEvent = event as DragEvent
+        if (!dragEvent.dataTransfer?.types.includes('Files')) return false
+        dragEvent.preventDefault()
+        dragEvent.stopPropagation()
+        if (dragEvent.dataTransfer) dragEvent.dataTransfer.dropEffect = 'copy'
+        return true
+      },
+      drop: (event) => {
+        const dragEvent = event as DragEvent
+        if (!dragEvent.dataTransfer?.files.length) return false
+        dragEvent.preventDefault()
+        dragEvent.stopPropagation()
+        emit('drop-files', dragEvent.dataTransfer.files)
+        return true
       },
     }),
     EditorView.theme({

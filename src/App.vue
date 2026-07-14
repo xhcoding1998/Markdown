@@ -646,6 +646,10 @@ function importIntoFolder(files: FileList, targetDirectory: string) {
   void store.importDroppedFiles(files, targetDirectory)
 }
 
+function importIntoEditor(files: FileList) {
+  importIntoFolder(files, '')
+}
+
 function overTreeRoot(event: DragEvent) {
   if (!event.dataTransfer?.types.includes('application/x-markdown-studio-path')) return
   event.preventDefault()
@@ -871,7 +875,7 @@ onBeforeUnmount(() => {
 
         <div ref="editorStage" class="editor-stage" :class="`mode-${viewMode}`" :style="splitStyle">
           <div v-show="viewMode !== 'preview'" class="editor-pane">
-            <MarkdownEditor v-model="content" :dark="dark" :font-size="settings.fontSize" :tab-size="settings.tabSize" @format-state="formatState = $event" @cursor-line="followEditorCursor" />
+            <MarkdownEditor v-model="content" :dark="dark" :font-size="settings.fontSize" :tab-size="settings.tabSize" @format-state="formatState = $event" @cursor-line="followEditorCursor" @drop-files="importIntoEditor" />
           </div>
           <div v-if="viewMode === 'split'" class="split-handle" title="拖动调整编辑和预览宽度" @pointerdown="startSplitResize"><span /></div>
           <div v-show="viewMode !== 'editor'" class="preview-pane"><MarkdownPreview :content="content" /></div>
