@@ -1,0 +1,20 @@
+- generic [ref=f1e3]:
+  - banner [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - generic [ref=f1e6]: M
+      - generic [ref=f1e7]: MD来了
+    - textbox "请先打开文件或目录" [disabled] [ref=f1e12]
+    - generic [ref=f1e14]:
+      - generic [ref=f1e15]:
+        - button "编辑" [disabled] [ref=f1e16]
+        - button "预览" [disabled] [ref=f1e22]
+      - button "导出" [disabled] [ref=f1e29]
+      - button "设置" [ref=f1e37] [cursor=pointer]
+  - main [ref=f1e42]:
+    - generic [ref=f1e43]:
+      - generic [ref=f1e47]:
+        - strong [ref=f1e48]: 打开文件或目录
+        - generic [ref=f1e49]: 直接编辑一个本地文件，或将整个目录作为工作区管理。
+      - generic [ref=f1e50]:
+        - button "新建工作区" [ref=f1e51] [cursor=pointer]
+        - button "打开本地文件夹" [ref=f1e55] [cursor=pointer]

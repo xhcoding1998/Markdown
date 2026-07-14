@@ -1,0 +1,232 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: M
+      - generic [ref=e7]: MD来了
+    - textbox "搜索当前范围…" [ref=e58]
+    - generic "产品文档/产品需求文档.md" [ref=e59]:
+      - strong [ref=e60]: 产品需求文档.md
+      - generic [ref=e61]: 已保存
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - button "编辑" [ref=e16] [cursor=pointer]
+        - button "预览" [ref=e22] [cursor=pointer]
+      - button "导出" [ref=e29] [cursor=pointer]
+      - button "设置" [ref=e37] [cursor=pointer]
+  - main [ref=e64]:
+    - complementary [ref=e65]:
+      - generic "拖动调整侧边栏宽度" [ref=e66]
+      - generic [ref=e69]:
+        - button "新建文件" [ref=e70] [cursor=pointer]
+        - button "更多新建选项" [ref=e75] [cursor=pointer]
+      - generic [ref=e78]:
+        - generic [ref=e79]: MD来了工作区
+        - generic:
+          - button "新建文件夹"
+          - button "重命名目录显示名称"
+          - button "移除目录"
+      - generic [ref=e81]:
+        - button "产品文档 重命名 产品文档 删除 产品文档" [ref=e82] [cursor=pointer]:
+          - generic [ref=e87]: 产品文档
+          - generic:
+            - button "重命名 产品文档"
+            - button "删除 产品文档"
+        - generic [ref=e88]:
+          - button "产品需求文档.md 重命名 产品需求文档.md 删除 产品需求文档.md" [ref=e89] [cursor=pointer]:
+            - generic [ref=e93]: 产品需求文档.md
+            - generic:
+              - button "重命名 产品需求文档.md"
+              - button "删除 产品需求文档.md"
+          - button "功能清单.md 重命名 功能清单.md 删除 功能清单.md" [ref=e94] [cursor=pointer]:
+            - generic [ref=e98]: 功能清单.md
+            - generic:
+              - button "重命名 功能清单.md"
+              - button "删除 功能清单.md"
+          - button "用户故事.md 重命名 用户故事.md 删除 用户故事.md" [ref=e99] [cursor=pointer]:
+            - generic [ref=e103]: 用户故事.md
+            - generic:
+              - button "重命名 用户故事.md"
+              - button "删除 用户故事.md"
+        - button "会议记录 重命名 会议记录 删除 会议记录" [ref=e104] [cursor=pointer]:
+          - generic [ref=e109]: 会议记录
+          - generic:
+            - button "重命名 会议记录"
+            - button "删除 会议记录"
+        - button "产品周会 2026-07-13.md 重命名 产品周会 2026-07-13.md 删除 产品周会 2026-07-13.md" [ref=e111] [cursor=pointer]:
+          - generic [ref=e115]: 产品周会 2026-07-13.md
+          - generic:
+            - button "重命名 产品周会 2026-07-13.md"
+            - button "删除 产品周会 2026-07-13.md"
+        - button "技术文档 重命名 技术文档 删除 技术文档" [ref=e116] [cursor=pointer]:
+          - generic [ref=e121]: 技术文档
+          - generic:
+            - button "重命名 技术文档"
+            - button "删除 技术文档"
+        - generic [ref=e122]:
+          - button "接口文档.md 重命名 接口文档.md 删除 接口文档.md" [ref=e123] [cursor=pointer]:
+            - generic [ref=e127]: 接口文档.md
+            - generic:
+              - button "重命名 接口文档.md"
+              - button "删除 接口文档.md"
+          - button "数据库设计.md 重命名 数据库设计.md 删除 数据库设计.md" [ref=e128] [cursor=pointer]:
+            - generic [ref=e132]: 数据库设计.md
+            - generic:
+              - button "重命名 数据库设计.md"
+              - button "删除 数据库设计.md"
+      - generic "6 个 Markdown 文档，当前文档 171 字，已保存" [ref=e133]:
+        - generic [ref=e137]:
+          - strong [ref=e138]: "6"
+          - text: 个文档
+          - generic [ref=e140]: 171 字 已保存
+    - complementary [ref=e142]:
+      - generic "拖动调整大纲区域宽度" [ref=e143]
+      - generic [ref=e145]:
+        - generic [ref=e146]:
+          - button "大纲" [ref=e147] [cursor=pointer]
+          - button "统计" [ref=e148] [cursor=pointer]
+          - button "收起文档导航" [ref=e149] [cursor=pointer]
+        - generic [ref=e153]:
+          - button "MD来了产品需求文档" [ref=e154] [cursor=pointer]
+          - button "1. 产品概述" [ref=e155] [cursor=pointer]
+          - button "2. 核心功能" [ref=e156] [cursor=pointer]
+          - button "3. 功能清单" [ref=e157] [cursor=pointer]
+          - button "4. 写作体验" [ref=e158] [cursor=pointer]
+        - generic [ref=e159]:
+          - generic [ref=e160]: 文档摘要
+          - generic [ref=e161]:
+            - generic [ref=e162]:
+              - strong [ref=e163]: "171"
+              - text: 字词
+            - generic [ref=e164]:
+              - strong [ref=e165]: "419"
+              - text: 字符
+            - generic [ref=e166]:
+              - strong [ref=e167]: "37"
+              - text: 行
+          - paragraph [ref=e168]: 阅读时间：1 分钟
+    - generic [ref=e169]:
+      - generic [ref=e170]:
+        - button "H" [ref=e171] [cursor=pointer]
+        - button "粗体" [ref=e173] [cursor=pointer]
+        - button "斜体" [ref=e176] [cursor=pointer]
+        - button "删除线" [ref=e179] [cursor=pointer]
+        - button "无序列表" [ref=e184] [cursor=pointer]
+        - button "任务列表" [ref=e186] [cursor=pointer]
+        - button "引用" [ref=e190] [cursor=pointer]
+        - button "代码块" [ref=e194] [cursor=pointer]
+      - generic [ref=e198]:
+        - generic [ref=e202]:
+          - generic [ref=e204]:
+            - generic [ref=e205]: "1"
+            - generic [ref=e206]: "2"
+            - generic [ref=e207]: "3"
+            - generic [ref=e208]: "4"
+            - generic [ref=e209]: "5"
+            - generic [ref=e210]: "6"
+            - generic [ref=e211]: "7"
+            - generic [ref=e212]: "8"
+            - generic [ref=e213]: "9"
+            - generic [ref=e214]: "10"
+            - generic [ref=e215]: "11"
+            - generic [ref=e216]: "12"
+            - generic [ref=e217]: "13"
+            - generic [ref=e218]: "14"
+            - generic [ref=e219]: "15"
+            - generic [ref=e220]: "16"
+            - generic [ref=e221]: "17"
+            - generic [ref=e222]: "18"
+            - generic [ref=e223]: "19"
+            - generic [ref=e224]: "20"
+            - generic [ref=e225]: "21"
+            - generic [ref=e226]: "22"
+            - generic [ref=e227]: "23"
+            - generic [ref=e228]: "24"
+            - generic [ref=e229]: "25"
+            - generic [ref=e230]: "26"
+            - generic [ref=e231]: "27"
+            - generic [ref=e232]: "28"
+            - generic [ref=e233]: "29"
+            - generic [ref=e234]: "30"
+            - generic [ref=e235]: "31"
+            - generic [ref=e236]: "32"
+            - generic [ref=e237]: "33"
+            - generic [ref=e238]: "34"
+            - generic [ref=e239]: "35"
+            - generic [ref=e240]: "36"
+          - textbox [active] [ref=e241]:
+            - generic [ref=e242]: "# MD来了产品需求文档"
+            - generic [ref=e244]: "## 1. 产品概述"
+            - generic [ref=e246]: MD来了是一款专注写作体验的本地 Markdown 编辑器，支持实时预览、大纲导航和工作区搜索。
+            - generic [ref=e248]: "> 让写作更专注，让内容始终掌握在自己手中。"
+            - generic [ref=e250]: "## 2. 核心功能"
+            - generic [ref=e252]: "- 📝 实时编辑与预览"
+            - generic [ref=e253]: "- 📁 本地工作区管理"
+            - generic [ref=e254]: "- 🔎 文档全文搜索"
+            - generic [ref=e255]: "- 🧭 标题大纲导航"
+            - generic [ref=e256]: "- 🌙 深色主题"
+            - generic [ref=e258]: "## 3. 功能清单"
+            - generic [ref=e260]: "| 完成度 | 功能 |"
+            - generic [ref=e261]: "| --- | --- |"
+            - generic [ref=e262]: "| ✅ | Markdown 语法高亮 |"
+            - generic [ref=e263]: "| ✅ | 代码块高亮 |"
+            - generic [ref=e264]: "| ✅ | 表格与任务列表 |"
+            - generic [ref=e265]: "| ⬜ | 数学公式支持 |"
+            - generic [ref=e267]: "```ts"
+            - generic [ref=e268]: "function hello(name: string) {"
+            - generic [ref=e269]: "console.log(`Hello, ${name}!`)"
+            - generic [ref=e270]: "}"
+            - generic [ref=e272]: hello('MD来了')
+            - generic [ref=e273]: "```"
+            - generic [ref=e275]: "## 4. 写作体验"
+            - generic [ref=e277]: 所有文件都直接存储在你的电脑中，不需要注册账户，也不会上传任何内容。
+        - generic "拖动调整编辑和预览宽度" [ref=e279]
+        - article [ref=e282]:
+          - heading "MD来了产品需求文档" [level=1] [ref=e283]
+          - heading "1. 产品概述" [level=2] [ref=e284]
+          - paragraph [ref=e285]: MD来了是一款专注写作体验的本地 Markdown 编辑器，支持实时预览、大纲导航和工作区搜索。
+          - blockquote [ref=e286]:
+            - paragraph [ref=e287]: 让写作更专注，让内容始终掌握在自己手中。
+          - heading "2. 核心功能" [level=2] [ref=e288]
+          - list [ref=e289]:
+            - listitem [ref=e290]: 📝 实时编辑与预览
+            - listitem [ref=e291]: 📁 本地工作区管理
+            - listitem [ref=e292]: 🔎 文档全文搜索
+            - listitem [ref=e293]: 🧭 标题大纲导航
+            - listitem [ref=e294]: 🌙 深色主题
+          - heading "3. 功能清单" [level=2] [ref=e295]
+          - table [ref=e296]:
+            - rowgroup [ref=e297]:
+              - row [ref=e298]:
+                - columnheader "完成度" [ref=e299]
+                - columnheader "功能" [ref=e300]
+            - rowgroup [ref=e301]:
+              - row [ref=e302]:
+                - cell "✅" [ref=e303]
+                - cell "Markdown 语法高亮" [ref=e304]
+              - row [ref=e305]:
+                - cell "✅" [ref=e306]
+                - cell "代码块高亮" [ref=e307]
+              - row [ref=e308]:
+                - cell "✅" [ref=e309]
+                - cell "表格与任务列表" [ref=e310]
+              - row [ref=e311]:
+                - cell "⬜" [ref=e312]
+                - cell "数学公式支持" [ref=e313]
+          - code [ref=e315]:
+            - generic [ref=e316]:
+              - button "复制代码" [ref=e317] [cursor=pointer]: 复制
+              - code [ref=e319]:
+                - text: function hello(
+                - generic [ref=e320]: "name: string"
+                - text: ") { console.log("
+                - generic [ref=e321]: "`Hello, ${name}!`"
+                - text: ") } hello('MD来了')"
+          - heading "4. 写作体验" [level=2] [ref=e322]
+          - paragraph [ref=e323]: 所有文件都直接存储在你的电脑中，不需要注册账户，也不会上传任何内容。
+      - generic [ref=e324]:
+        - generic [ref=e325]: 37 行
+        - generic [ref=e326]: 171 字
+        - generic [ref=e327]: 419 字符
+        - generic [ref=e328]: Markdown
+        - generic [ref=e329]: "空格: 2"
+        - generic [ref=e330]: 自动保存：开启

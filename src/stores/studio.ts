@@ -1,0 +1,671 @@
+import { computed, ref, watch } from 'vue'
+import { defineStore } from 'pinia'
+import type { AppSettings, FileNode, SaveStatus, SearchResult, ThemeMode, TrashItem, ViewMode } from '../types'
+import * as desktop from '../services/desktop'
+import * as web from '../services/webWorkspace'
+
+const demoContent = `# 码档产品需求文档
+
+## 1. 产品概述
+
+码档是一款专注写作体验的本地 Markdown 编辑器，支持实时预览、大纲导航和全文搜索。
+
+> 让写作更专注，让内容始终掌握在自己手中。
+
+## 2. 核心功能
+
+- 📝 实时编辑与预览
+- 📁 本地目录管理
+- 🔎 文档全文搜索
+- 🧭 标题大纲导航
+- 🌙 深色主题
+
+## 3. 功能清单
+
+| 完成度 | 功能 |
+| --- | --- |
+| ✅ | Markdown 语法高亮 |
+| ✅ | 代码块高亮 |
+| ✅ | 表格与任务列表 |
+| ⬜ | 数学公式支持 |
+
+\`\`\`ts
+function hello(name: string) {
+  console.log(\`Hello, \${name}!\`)
+}
+
+hello('码档')
+\`\`\`
+
+## 4. 写作体验
+
+所有文件都直接存储在你的电脑中，不需要注册账户，也不会上传任何内容。
+`
+
+const demoTree: FileNode[] = [
+  {
+    name: '产品文档', path: '产品文档', relativePath: '产品文档', kind: 'directory', children: [
+      { name: '产品需求文档.md', path: '产品文档/产品需求文档.md', relativePath: '产品文档/产品需求文档.md', kind: 'file' },
+      { name: '功能清单.md', path: '产品文档/功能清单.md', relativePath: '产品文档/功能清单.md', kind: 'file' },
+      { name: '用户故事.md', path: '产品文档/用户故事.md', relativePath: '产品文档/用户故事.md', kind: 'file' },
+    ],
+  },
+  {
+    name: '技术文档', path: '技术文档', relativePath: '技术文档', kind: 'directory', children: [
+      { name: '接口文档.md', path: '技术文档/接口文档.md', relativePath: '技术文档/接口文档.md', kind: 'file' },
+      { name: '数据库设计.md', path: '技术文档/数据库设计.md', relativePath: '技术文档/数据库设计.md', kind: 'file' },
+    ],
+  },
+  {
+    name: '会议记录', path: '会议记录', relativePath: '会议记录', kind: 'directory', children: [
+      { name: '产品周会 2026-07-13.md', path: '会议记录/产品周会 2026-07-13.md', relativePath: '会议记录/产品周会 2026-07-13.md', kind: 'file' },
+    ],
+  },
+]
+
+const defaultSettings: AppSettings = {
+  theme: 'light',
+  fontSize: 15,
+  tabSize: 2,
+  autoSaveDelay: 800,
+  splitRatio: 0.5,
+  leftSidebarWidth: 250,
+  rightSidebarWidth: 224,
+}
+
+const desktopSessionKey = 'md-lai-le-desktop-session'
+const settingsKey = 'md-lai-le-settings'
+const legacySettingsKey = 'markdown-studio-settings'
+const viewModeKey = 'md-lai-le-view-mode'
+
+export const useStudioStore = defineStore('studio', () => {
+  const workspacePath = ref('')
+  const workspaceName = ref('')
+  const workspaceMode = ref<'files' | 'directory'>('directory')
+  const tree = ref<FileNode[]>([])
+  const activePath = ref('')
+  const content = ref('')
+  const savedContent = ref('')
+  const saveStatus = ref<SaveStatus>('saved')
+  const storedViewMode = localStorage.getItem(viewModeKey)
+  const viewMode = ref<ViewMode>(storedViewMode === 'editor' || storedViewMode === 'preview' || storedViewMode === 'split' ? storedViewMode : 'split')
+  const settings = ref<AppSettings>({ ...defaultSettings })
+  const searchResults = ref<SearchResult[]>([])
+  const isSearching = ref(false)
+  const errorMessage = ref('')
+  const loading = ref(false)
+  const trashItems = ref<TrashItem[]>([])
+
+  const activeName = computed(() => activePath.value.split(/[\\/]/).pop() || '未命名文档')
+  const isDemo = computed(() => !desktop.isTauri())
+
+  let saveTimer: number | undefined
+  let suppressWatch = false
+  const standalonePaths = new Set<string>()
+
+  function persistDesktopSession() {
+    if (!desktop.isTauri()) return
+    if (!workspacePath.value) {
+      localStorage.removeItem(desktopSessionKey)
+      return
+    }
+    localStorage.setItem(desktopSessionKey, JSON.stringify({
+      workspacePath: workspacePath.value,
+      workspaceName: workspaceName.value,
+      workspaceMode: workspaceMode.value,
+      standalonePaths: [...standalonePaths],
+      activePath: activePath.value,
+    }))
+  }
+
+  async function loadTrash() {
+    trashItems.value = desktop.isTauri() && workspacePath.value ? await desktop.listTrash() : []
+  }
+
+  function scopedTree(nodes: FileNode[]): FileNode[] {
+    return workspaceMode.value === 'files' ? filterTree(nodes, standalonePaths) : nodes
+  }
+
+  function applyTheme(theme: ThemeMode) {
+    const dark = theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+  }
+
+  function loadSettings() {
+    try {
+      const stored = localStorage.getItem(settingsKey) || localStorage.getItem(legacySettingsKey)
+      if (stored) settings.value = { ...defaultSettings, ...JSON.parse(stored) }
+    } catch {
+      settings.value = { ...defaultSettings }
+    }
+    applyTheme(settings.value.theme)
+  }
+
+  function persistSettings() {
+    localStorage.setItem(settingsKey, JSON.stringify(settings.value))
+  }
+
+  watch(settings, (value) => {
+    localStorage.setItem(settingsKey, JSON.stringify(value))
+    applyTheme(value.theme)
+  }, { deep: true, flush: 'sync' })
+
+  watch(viewMode, (value) => localStorage.setItem(viewModeKey, value), { flush: 'sync' })
+
+  watch(content, () => {
+    if (suppressWatch || !activePath.value) return
+    saveStatus.value = 'dirty'
+    window.clearTimeout(saveTimer)
+    saveTimer = window.setTimeout(save, settings.value.autoSaveDelay)
+  })
+
+  async function initializeWorkspace() {
+    if (desktop.isTauri()) {
+      const stored = localStorage.getItem(desktopSessionKey)
+      if (!stored) return
+      try {
+        const session = JSON.parse(stored) as {
+          workspacePath: string
+          workspaceName: string
+          workspaceMode: 'files' | 'directory'
+          standalonePaths: string[]
+          activePath: string
+        }
+        workspaceMode.value = session.workspaceMode === 'files' ? 'files' : 'directory'
+        workspacePath.value = session.workspacePath
+        workspaceName.value = session.workspaceName || (session.workspaceMode === 'files' ? '默认文件' : session.workspacePath.split(/[\\/]/).pop() || session.workspacePath)
+        standalonePaths.clear()
+        session.standalonePaths?.forEach((path) => standalonePaths.add(path))
+        tree.value = scopedTree(await desktop.openWorkspace(session.workspacePath))
+        await loadTrash()
+        const active = findNode(tree.value, session.activePath) || findFirstFile(tree.value)
+        if (active) await openFile(active)
+        else persistDesktopSession()
+      } catch {
+        localStorage.removeItem(desktopSessionKey)
+        workspacePath.value = ''
+        workspaceName.value = ''
+        tree.value = []
+        activePath.value = ''
+        trashItems.value = []
+      }
+      return
+    }
+    loading.value = true
+    try {
+      const result = await web.initialize(flattenFiles(demoTree).map((node) => ({ path: node.relativePath, content: demoContent })))
+      workspacePath.value = result.name
+      workspaceName.value = result.name
+      tree.value = result.tree
+      const first = findFirstFile(tree.value)
+      if (first) await openFile(first)
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function selectWorkspace() {
+    errorMessage.value = ''
+    loading.value = true
+    try {
+      if (desktop.isTauri()) {
+        const selected = await desktop.chooseWorkspace()
+        if (!selected) return false
+        standalonePaths.clear()
+        workspaceMode.value = 'directory'
+        workspacePath.value = selected
+        workspaceName.value = selected.split(/[\\/]/).pop() || selected
+        tree.value = await desktop.openWorkspace(selected)
+        await loadTrash()
+      } else {
+        const result = await web.chooseDirectory()
+        if (!result) return false
+        workspacePath.value = result.name
+        workspaceName.value = result.name
+        tree.value = result.tree
+      }
+      const first = findFirstFile(tree.value)
+      if (first) await openFile(first)
+      else persistDesktopSession()
+      return true
+    } catch (error) {
+      errorMessage.value = readableError(error)
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function selectFiles() {
+    const selected = desktop.isTauri() ? await desktop.chooseMarkdownFiles() : await web.chooseMarkdownFiles()
+    if (!selected?.length) return false
+
+    await save()
+    suppressWatch = true
+    workspacePath.value = ''
+    workspaceName.value = ''
+    workspaceMode.value = 'files'
+    tree.value = []
+    activePath.value = ''
+    content.value = ''
+    savedContent.value = ''
+    saveStatus.value = 'saved'
+    standalonePaths.clear()
+    queueMicrotask(() => { suppressWatch = false })
+
+    if (desktop.isTauri()) {
+      await importPathFiles(selected as string[])
+    } else {
+      const result = await web.openMarkdownFiles(selected as File[])
+      workspacePath.value = result.name
+      workspaceName.value = result.name
+      tree.value = result.tree
+      result.tree.filter((node) => node.kind === 'file').forEach((node) => standalonePaths.add(node.relativePath))
+      const first = findFirstFile(tree.value)
+      if (first) await openFile(first)
+    }
+    return !!activePath.value
+  }
+
+  async function refreshWorkspace() {
+    if (!workspacePath.value) return
+    try {
+      const nextTree = desktop.isTauri() ? await desktop.openWorkspace(workspacePath.value) : await web.refresh()
+      tree.value = scopedTree(nextTree)
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  async function openFile(node: FileNode, targetLine?: number) {
+    if (node.kind !== 'file') return
+    if (saveStatus.value === 'dirty') await save()
+    loading.value = true
+    try {
+      const next = desktop.isTauri() ? await desktop.readDocument(node.relativePath) : await web.readDocument(node.relativePath)
+      suppressWatch = true
+      activePath.value = node.relativePath
+      content.value = next
+      savedContent.value = next
+      saveStatus.value = 'saved'
+      queueMicrotask(() => { suppressWatch = false })
+      if (targetLine) window.setTimeout(() => window.dispatchEvent(new CustomEvent('studio:goto-line', { detail: targetLine })), 0)
+      persistDesktopSession()
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function save() {
+    window.clearTimeout(saveTimer)
+    if (!activePath.value || content.value === savedContent.value) {
+      saveStatus.value = 'saved'
+      return
+    }
+    saveStatus.value = 'saving'
+    try {
+      if (desktop.isTauri()) await desktop.writeDocument(activePath.value, content.value)
+      else await web.writeDocument(activePath.value, content.value)
+      savedContent.value = content.value
+      saveStatus.value = 'saved'
+    } catch (error) {
+      saveStatus.value = 'error'
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  async function newDocument(name: string) {
+    const normalized = name.trim().endsWith('.md') ? name.trim() : `${name.trim()}.md`
+    if (!normalized || normalized === '.md') return
+    try {
+      const node = desktop.isTauri() ? await desktop.createDocument(normalized) : await web.createDocument(normalized)
+      if (workspaceMode.value === 'files') standalonePaths.add(normalized)
+      await refreshWorkspace()
+      await openFile(node)
+      content.value = `# ${normalized.replace(/\.md$/, '')}\n\n`
+      await save()
+      persistDesktopSession()
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  async function newFolder(name: string) {
+    const normalized = name.trim()
+    if (!normalized) return
+    try {
+      if (desktop.isTauri()) await desktop.createFolder(normalized)
+      else await web.createFolder(normalized)
+      if (workspaceMode.value === 'files') standalonePaths.add(normalized)
+      await refreshWorkspace()
+      persistDesktopSession()
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  async function deleteEntry(node: FileNode) {
+    try {
+      if (desktop.isTauri()) {
+        await desktop.trashEntry(node.relativePath)
+      } else {
+        await web.deleteEntry(node.relativePath)
+      }
+      if (workspaceMode.value === 'files') {
+        for (const path of [...standalonePaths]) {
+          if (path === node.relativePath || path.startsWith(`${node.relativePath}/`)) standalonePaths.delete(path)
+        }
+      }
+      await refreshWorkspace()
+      await loadTrash()
+
+      if (activePath.value === node.relativePath || activePath.value.startsWith(`${node.relativePath}/`)) {
+        const next = findFirstFile(tree.value)
+        if (next) await openFile(next)
+        else {
+          suppressWatch = true
+          activePath.value = ''
+          content.value = ''
+          savedContent.value = ''
+          saveStatus.value = 'saved'
+          queueMicrotask(() => { suppressWatch = false })
+        }
+      }
+      persistDesktopSession()
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  async function restoreTrashItem(item: TrashItem) {
+    if (!desktop.isTauri()) return
+    try {
+      const restored = await desktop.restoreTrash(item.id)
+      if (workspaceMode.value === 'files') standalonePaths.add(restored.originalRelativePath)
+      await refreshWorkspace()
+      await loadTrash()
+      persistDesktopSession()
+      const node = findNode(tree.value, restored.originalRelativePath)
+      if (node?.kind === 'file') await openFile(node)
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  async function permanentlyDeleteTrashItem(item: TrashItem) {
+    if (!desktop.isTauri()) return
+    try {
+      await desktop.permanentlyDeleteTrash(item.id)
+      await loadTrash()
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  async function renameEntry(node: FileNode, newName: string) {
+    let normalized = newName.trim()
+    if (node.kind === 'file' && !/\.md(?:own)?$/i.test(normalized)) normalized += '.md'
+    if (!normalized || normalized === node.name) return
+    try {
+      const parent = node.relativePath.includes('/') ? node.relativePath.slice(0, node.relativePath.lastIndexOf('/') + 1) : ''
+      const nextPath = `${parent}${normalized}`
+      if (desktop.isTauri()) {
+        await desktop.renameEntry(node.relativePath, normalized)
+      } else {
+        await web.renameEntry(node.relativePath, normalized)
+      }
+      if (workspaceMode.value === 'files') replaceScopedPath(standalonePaths, node.relativePath, nextPath)
+      await refreshWorkspace()
+      if (activePath.value === node.relativePath || activePath.value.startsWith(`${node.relativePath}/`)) {
+        activePath.value = `${nextPath}${activePath.value.slice(node.relativePath.length)}`
+      }
+      persistDesktopSession()
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  function renameWorkspace(name: string) {
+    const normalized = name.trim()
+    if (normalized) {
+      workspaceName.value = normalized
+      persistDesktopSession()
+    }
+  }
+
+  async function removeWorkspace() {
+    if (!desktop.isTauri()) await web.detachWorkspace()
+    suppressWatch = true
+    workspacePath.value = ''
+    workspaceName.value = ''
+    workspaceMode.value = 'directory'
+    standalonePaths.clear()
+    trashItems.value = []
+    tree.value = []
+    activePath.value = ''
+    content.value = ''
+    savedContent.value = ''
+    saveStatus.value = 'saved'
+    queueMicrotask(() => { suppressWatch = false })
+    localStorage.removeItem(desktopSessionKey)
+  }
+
+  async function performSearch(query: string) {
+    const clean = query.trim()
+    if (!clean) {
+      searchResults.value = []
+      return
+    }
+    isSearching.value = true
+    try {
+      const results = desktop.isTauri() ? await desktop.searchWorkspace(clean) : await web.search(clean)
+      searchResults.value = workspaceMode.value === 'files'
+        ? results.filter((result) => standalonePaths.has(result.relativePath))
+        : results
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    } finally {
+      isSearching.value = false
+    }
+  }
+
+  async function openSearchResult(result: SearchResult) {
+    const node = flattenFiles(tree.value).find((entry) => entry.relativePath === result.relativePath)
+    if (node) await openFile(node, result.line)
+  }
+
+  async function revealEntry(node: FileNode) {
+    if (!desktop.isTauri()) return
+    try {
+      await desktop.revealInFileManager(node.path)
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  function dismissError() {
+    errorMessage.value = ''
+  }
+
+  async function moveEntry(sourcePath: string, targetDirectory: string) {
+    const source = findNode(tree.value, sourcePath)
+    if (!source) return
+    const nextPath = targetDirectory ? `${targetDirectory}/${source.name}` : source.name
+    if (nextPath === sourcePath) return
+    if (source.kind === 'directory' && (targetDirectory === sourcePath || targetDirectory.startsWith(`${sourcePath}/`))) {
+      errorMessage.value = '不能将文件夹移动到它自身或其子文件夹中。'
+      return
+    }
+    if (findNode(tree.value, nextPath)) {
+      errorMessage.value = '目标文件夹中已经存在同名项目。'
+      return
+    }
+    try {
+      if (activePath.value === sourcePath || activePath.value.startsWith(`${sourcePath}/`)) await save()
+      if (desktop.isTauri()) {
+        await desktop.moveEntry(sourcePath, targetDirectory)
+      } else {
+        await web.moveEntry(sourcePath, targetDirectory)
+      }
+      if (workspaceMode.value === 'files') replaceScopedPath(standalonePaths, sourcePath, nextPath)
+      await refreshWorkspace()
+      if (activePath.value === sourcePath || activePath.value.startsWith(`${sourcePath}/`)) {
+        activePath.value = `${nextPath}${activePath.value.slice(sourcePath.length)}`
+      }
+      persistDesktopSession()
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  async function importDroppedFiles(files: FileList, targetDirectory = '') {
+    const markdownFiles = [...files].filter((file) => /\.md(?:own)?$/i.test(file.name))
+    if (!markdownFiles.length) {
+      errorMessage.value = '请拖入 .md 或 .markdown 文件。'
+      return
+    }
+    try {
+      await web.importFiles(markdownFiles, targetDirectory)
+      await refreshWorkspace()
+      const firstImported = findNode(tree.value, targetDirectory ? `${targetDirectory}/${markdownFiles[0].name}` : markdownFiles[0].name)
+      if (firstImported) await openFile(firstImported)
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  async function importPathFiles(paths: string[], targetDirectory = '') {
+    if (!desktop.isTauri() || !paths.length) return
+    const markdownPaths = paths.filter((path) => /\.md(?:own)?$/i.test(path))
+    if (!markdownPaths.length) {
+      errorMessage.value = '请拖入 .md 或 .markdown 文件。'
+      return
+    }
+    try {
+      errorMessage.value = ''
+
+      if (!workspacePath.value) {
+        const firstPath = markdownPaths[0]
+        const directory = parentDirectory(firstPath)
+        if (!directory) throw new Error('无法识别拖入文件所在的文件夹。')
+
+        workspacePath.value = directory
+        workspaceName.value = '默认文件'
+        workspaceMode.value = 'files'
+        standalonePaths.clear()
+        const relativePath = relativePathWithin(firstPath, directory)
+        if (!relativePath) throw new Error('无法识别拖入文件的相对路径。')
+        standalonePaths.add(relativePath)
+        markdownPaths.slice(1).forEach((path) => {
+          const relative = relativePathWithin(path, directory)
+          if (relative) standalonePaths.add(relative)
+        })
+        const selectedFiles = await desktop.openMarkdownFiles(markdownPaths)
+        tree.value = scopedTree(selectedFiles)
+        await loadTrash()
+        const dropped = findNode(tree.value, relativePath)
+        if (dropped) await openFile(dropped)
+        else {
+          const first = findFirstFile(tree.value)
+          if (first) await openFile(first)
+        }
+        persistDesktopSession()
+        return
+      }
+
+      await desktop.importFiles(markdownPaths, targetDirectory)
+      if (workspaceMode.value === 'files') {
+        markdownPaths.forEach((path) => {
+          const name = path.split(/[\\/]/).pop() || ''
+          if (name) standalonePaths.add(targetDirectory ? `${targetDirectory}/${name}` : name)
+        })
+      }
+      await refreshWorkspace()
+      const importedName = markdownPaths[0].split(/[\\/]/).pop() || ''
+      const importedPath = targetDirectory ? `${targetDirectory}/${importedName}` : importedName
+      const imported = findNode(tree.value, importedPath)
+      if (imported) await openFile(imported)
+      persistDesktopSession()
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  loadSettings()
+
+  return {
+    workspacePath, workspaceName, workspaceMode, tree, activePath, activeName, content, saveStatus, trashItems,
+    viewMode, settings, searchResults, isSearching, errorMessage, loading, isDemo,
+    initializeWorkspace, selectWorkspace, selectFiles, refreshWorkspace, openFile, save, newDocument, newFolder, deleteEntry, renameEntry,
+    moveEntry, importDroppedFiles, importPathFiles, loadTrash, restoreTrashItem, permanentlyDeleteTrashItem,
+    renameWorkspace, removeWorkspace, performSearch,
+    openSearchResult, revealEntry, dismissError, persistSettings,
+  }
+})
+
+function findFirstFile(nodes: FileNode[]): FileNode | undefined {
+  for (const node of nodes) {
+    if (node.kind === 'file') return node
+    const nested = node.children && findFirstFile(node.children)
+    if (nested) return nested
+  }
+  return undefined
+}
+
+function flattenFiles(nodes: FileNode[]): FileNode[] {
+  return nodes.flatMap((node) => node.kind === 'file' ? [node] : flattenFiles(node.children || []))
+}
+
+function findNode(nodes: FileNode[], relativePath: string): FileNode | undefined {
+  for (const node of nodes) {
+    if (node.relativePath === relativePath) return node
+    const nested = node.children && findNode(node.children, relativePath)
+    if (nested) return nested
+  }
+  return undefined
+}
+
+function filterTree(nodes: FileNode[], allowedPaths: Set<string>): FileNode[] {
+  const result: FileNode[] = []
+  for (const node of nodes) {
+    if (node.kind === 'file') {
+      if (allowedPaths.has(node.relativePath)) result.push(node)
+      continue
+    }
+    const children = filterTree(node.children || [], allowedPaths)
+    if (allowedPaths.has(node.relativePath) || children.length) result.push({ ...node, children })
+  }
+  return result
+}
+
+function replaceScopedPath(paths: Set<string>, previousPath: string, nextPath: string) {
+  const replacements = [...paths]
+    .filter((path) => path === previousPath || path.startsWith(`${previousPath}/`))
+    .map((path) => [path, `${nextPath}${path.slice(previousPath.length)}`] as const)
+  replacements.forEach(([previous]) => paths.delete(previous))
+  replacements.forEach(([, next]) => paths.add(next))
+}
+
+function parentDirectory(path: string): string {
+  const clean = path.replace(/[\\/]+$/, '')
+  const separator = Math.max(clean.lastIndexOf('\\'), clean.lastIndexOf('/'))
+  return separator > 0 ? clean.slice(0, separator) : ''
+}
+
+function relativePathWithin(path: string, directory: string): string | undefined {
+  const normalizedPath = path.replace(/\\/g, '/')
+  const normalizedDirectory = directory.replace(/\\/g, '/').replace(/\/$/, '')
+  const prefix = `${normalizedDirectory}/`
+  if (!normalizedPath.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase())) return undefined
+  return normalizedPath.slice(prefix.length)
+}
+
+function readableError(error: unknown): string {
+  if (typeof error === 'string') return error
+  if (error instanceof Error) return error.message
+  return '操作未完成，请稍后重试。'
+}
