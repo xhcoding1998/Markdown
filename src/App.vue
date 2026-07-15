@@ -71,6 +71,7 @@ const workspaceRenameOpen = ref(false)
 const workspaceRenameName = ref('')
 const workspaceRemoveOpen = ref(false)
 const closeConfirmOpen = ref(false)
+const exitInProgress = ref(false)
 const windowMaximized = ref(false)
 const compactLayout = ref(false)
 const viewportWidth = ref(window.innerWidth)
@@ -308,10 +309,18 @@ async function minimizeFromCloseDialog() {
 }
 
 async function exitApplication() {
+  if (exitInProgress.value) return
+  exitInProgress.value = true
   await store.save()
-  if (saveStatus.value === 'error') return
   closeConfirmOpen.value = false
-  await quitApplication()
+  const forceClose = async () => {
+    unlistenCloseRequested?.()
+    unlistenCloseRequested = undefined
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    await getCurrentWindow().destroy()
+  }
+  window.setTimeout(() => { void forceClose() }, 800)
+  void quitApplication().catch(() => forceClose())
 }
 
 function format(type: string) {
@@ -839,6 +848,7 @@ onMounted(async () => {
       windowMaximized.value = await currentWindow.isMaximized()
     })
     unlistenCloseRequested = await currentWindow.onCloseRequested((event) => {
+      if (exitInProgress.value) return
       event.preventDefault()
       closeConfirmOpen.value = true
     })
@@ -1235,8 +1245,8 @@ onBeforeUnmount(() => {
     <UiModal v-model="closeConfirmOpen" title="关闭码档">
       <div class="close-confirm-copy"><strong>要最小化窗口还是退出程序？</strong><p>选择退出前，当前文档会先完成自动保存。</p></div>
       <div class="ui-form-actions close-confirm-actions">
-        <UiButton variant="secondary" @click="minimizeFromCloseDialog">最小化</UiButton>
-        <UiButton variant="danger" @click="exitApplication">退出程序</UiButton>
+        <UiButton variant="secondary" :disabled="exitInProgress" @click="minimizeFromCloseDialog">最小化</UiButton>
+        <UiButton variant="danger" :disabled="exitInProgress" @click="exitApplication">{{ exitInProgress ? '正在退出…' : '退出程序' }}</UiButton>
       </div>
     </UiModal>
 

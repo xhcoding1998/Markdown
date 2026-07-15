@@ -16,8 +16,8 @@ function change(delta: number) {
 </template>
 
 <style scoped>
-.ui-stepper { height: 32px; display: grid; grid-template-columns: 30px minmax(54px, auto) 30px; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-subtle); }
-.ui-stepper button { height: 100%; display: grid; place-items: center; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.ui-stepper { width: 116px; min-width: 116px; height: 32px; display: grid; flex: 0 0 116px; grid-template-columns: 30px 56px 30px; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-subtle); }
+.ui-stepper button { width: 30px; min-width: 30px; height: 100%; display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .ui-stepper button:hover:not(:disabled) { background: var(--bg-hover); color: var(--accent); }
 .ui-stepper button:disabled { opacity: .3; cursor: not-allowed; }
 .ui-stepper span { display: grid; place-items: center; height: 18px; border-right: 1px solid var(--border); border-left: 1px solid var(--border); color: var(--text-primary); font-size: 11px; font-variant-numeric: tabular-nums; }
