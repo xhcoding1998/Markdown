@@ -207,14 +207,22 @@ export function chooseMarkdownFiles(): Promise<File[] | null> {
     input.style.display = 'none'
     document.body.appendChild(input)
     let settled = false
+    let focusFallback: number | undefined
     const finish = (files: File[] | null) => {
       if (settled) return
       settled = true
+      window.clearTimeout(focusFallback)
       input.remove()
       resolve(files)
     }
     input.addEventListener('change', () => finish(input.files?.length ? [...input.files] : null), { once: true })
-    window.addEventListener('focus', () => window.setTimeout(() => finish(input.files?.length ? [...input.files] : null), 250), { once: true })
+    input.addEventListener('cancel', () => finish(null), { once: true })
+    window.addEventListener('focus', () => {
+      // Safari on macOS can restore window focus before dispatching the input's
+      // change event. Give that event enough time to arrive before treating the
+      // picker as cancelled on browsers without a reliable `cancel` event.
+      focusFallback = window.setTimeout(() => finish(input.files?.length ? [...input.files] : null), 1500)
+    }, { once: true })
     input.click()
   })
 }

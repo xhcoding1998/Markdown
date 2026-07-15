@@ -222,6 +222,7 @@ export const useStudioStore = defineStore('studio', () => {
       const first = findFirstFile(tree.value)
       if (first) await openFile(first)
     }
+    if (activePath.value) viewMode.value = 'editor'
     return !!activePath.value
   }
 
