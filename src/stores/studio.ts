@@ -6,6 +6,12 @@ import * as web from '../services/webWorkspace'
 
 const defaultSettings: AppSettings = {
   theme: 'light',
+  colorTheme: 'ocean',
+  backgroundPanelOpacity: 88,
+  codeBlockMode: 'limited',
+  codeBlockMaxHeight: 420,
+  codeTheme: 'vscode',
+  codeWrapMode: 'scroll',
   fontSize: 15,
   tabSize: 2,
   autoSaveDelay: 800,
@@ -71,6 +77,7 @@ export const useStudioStore = defineStore('studio', () => {
   function applyTheme(theme: ThemeMode) {
     const dark = theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
     document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+    document.documentElement.setAttribute('data-palette', settings.value.colorTheme || 'ocean')
   }
 
   function loadSettings() {

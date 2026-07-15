@@ -47,17 +47,23 @@ function handleKey(event: KeyboardEvent) {
   if (event.key === 'Escape') close()
 }
 
+function handleScroll(event: Event) {
+  const target = event.target
+  if (target instanceof Node && panel.value?.contains(target)) return
+  updatePosition()
+}
+
 onMounted(() => {
   document.addEventListener('pointerdown', handlePointer)
   document.addEventListener('keydown', handleKey)
   window.addEventListener('resize', updatePosition)
-  window.addEventListener('scroll', updatePosition, true)
+  window.addEventListener('scroll', handleScroll, true)
 })
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', handlePointer)
   document.removeEventListener('keydown', handleKey)
   window.removeEventListener('resize', updatePosition)
-  window.removeEventListener('scroll', updatePosition, true)
+  window.removeEventListener('scroll', handleScroll, true)
 })
 
 watch(() => props.modelValue, async (open) => {

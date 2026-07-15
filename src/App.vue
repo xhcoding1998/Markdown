@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import {
   AlertTriangle, ArchiveRestore, ArrowUpDown, Bold, Braces, Check, ChevronDown, Code2, Columns2, Copy, Download, Eye, FilePlus2,
-  FileText, FolderOpen, FolderPlus, HardDrive, Hash, Image as ImageIcon, Italic, List, ListChecks, Pencil,
+  FileText, FolderOpen, FolderPlus, HardDrive, Hash, Image as ImageIcon, ImagePlus, Italic, List, ListChecks, Pencil,
   Minus, PanelLeftClose, PanelLeftOpen, Quote, Search, Settings, Square,
   Strikethrough, Trash2, Upload, X,
 } from '@lucide/vue'
@@ -20,6 +20,7 @@ import UiNumberStepper from './components/ui/UiNumberStepper.vue'
 import UiPopover from './components/ui/UiPopover.vue'
 import UiSelect from './components/ui/UiSelect.vue'
 import { exportBinary, isTauri, quitApplication } from './services/desktop'
+import { loadBackground, removeBackground, saveBackground } from './services/appearance'
 import {
   chooseBackupFile, createWorkspaceBackup, deleteUnusedAssets, inspectWorkspaceBackup, storageSnapshot,
   type WebBackupSummary, type WebStorageSnapshot,
@@ -48,6 +49,10 @@ const newFolderName = ref('')
 const newMenuOpen = ref(false)
 const fileSortOpen = ref(false)
 const settingsOpen = ref(false)
+const settingsSection = ref<'appearance' | 'editor' | 'code'>('appearance')
+const backgroundInput = ref<HTMLInputElement>()
+const backgroundUrl = ref('')
+const backgroundName = ref('')
 const storageOpen = ref(false)
 const storageCleanupOpen = ref(false)
 const storageLoading = ref(false)
@@ -106,10 +111,31 @@ type PreparedExport = {
 }
 
 const themeOptions = [
-  { label: '浅色', value: 'light', description: '明亮、清爽的编辑环境' },
-  { label: '深色', value: 'dark', description: '适合夜间和暗光环境' },
-  { label: '跟随系统', value: 'system', description: '自动匹配系统外观' },
+  { label: '浅色', value: 'light', description: '清爽明亮' },
+  { label: '深色', value: 'dark', description: '柔和护眼' },
+  { label: '自动', value: 'system', description: '跟随系统' },
 ]
+const codeBlockModeOptions = [
+  { label: '限制高度', value: 'limited', description: '长代码块内部滚动' },
+  { label: '全部展开', value: 'expanded', description: '显示完整代码内容' },
+]
+const codeThemeOptions = [
+  { label: 'VS Code', value: 'vscode', description: '清晰均衡的深色主题' },
+  { label: 'JetBrains', value: 'jetbrains', description: 'Darcula 高对比配色' },
+  { label: 'GitHub Light', value: 'github', description: '适合浅色界面的代码主题' },
+  { label: 'Nord', value: 'nord', description: '柔和低对比的极地配色' },
+]
+const codeWrapOptions = [
+  { label: '横向滚动', value: 'scroll', description: '保留代码原始行结构' },
+  { label: '自动换行', value: 'wrap', description: '长代码适应预览宽度' },
+]
+const colorThemes = [
+  { value: 'ocean', label: '海岸蓝', colors: ['#2563eb', '#dce9ff', '#f6f9ff'] },
+  { value: 'forest', label: '松林绿', colors: ['#17845d', '#dcefe7', '#f5faf7'] },
+  { value: 'violet', label: '鸢尾紫', colors: ['#7656c9', '#e9e1fa', '#faf8fd'] },
+  { value: 'clay', label: '陶土棕', colors: ['#b45f3d', '#f2e3dc', '#fcf8f5'] },
+  { value: 'graphite', label: '石墨灰', colors: ['#536273', '#e2e6ea', '#f7f8f9'] },
+] as const
 const tabOptions = [
   { label: '2 个空格', value: 2, description: '适合前端与 Markdown' },
   { label: '4 个空格', value: 4, description: '更宽的代码缩进' },
@@ -125,6 +151,10 @@ const storedFileSort = localStorage.getItem('md-lai-le-file-sort') as FileSortMo
 const fileSortMode = ref<FileSortMode>(fileSortOptions.some((option) => option.value === storedFileSort) ? storedFileSort! : 'name-asc')
 
 const dark = computed(() => settings.value.theme === 'dark' || (settings.value.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches))
+const appAppearanceStyle = computed(() => ({
+  '--app-background-image': backgroundUrl.value ? `url("${backgroundUrl.value}")` : 'none',
+  '--background-panel-opacity': `${settings.value.backgroundPanelOpacity}%`,
+}))
 const headings = computed<Heading[]>(() => {
   const result: Heading[] = []
   content.value.split('\n').forEach((line, index) => {
@@ -227,6 +257,10 @@ watch(searchQuery, (query) => {
 })
 
 watch(() => settings.value.theme, () => requestAnimationFrame(() => window.dispatchEvent(new Event('studio:theme-changed'))))
+watch(() => settings.value.colorTheme, (value) => {
+  document.documentElement.setAttribute('data-palette', value || 'ocean')
+  requestAnimationFrame(() => window.dispatchEvent(new Event('studio:theme-changed')))
+}, { immediate: true })
 watch([rightOpen, activeRightTab], ([open, tab]) => {
   localStorage.setItem('md-lai-le-panel-state', JSON.stringify({ rightOpen: open, activeRightTab: tab }))
 }, { flush: 'sync' })
@@ -480,7 +514,7 @@ function buildExportHtml() {
   const textColor = dark.value ? '#e7e9ee' : '#20242c'
   const secondaryColor = dark.value ? '#a7acb7' : '#667085'
   const borderColor = dark.value ? '#343842' : '#d9dde5'
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${activeName.value}</title><style>html{background:${pageBackground}}body{max-width:860px;margin:40px auto;padding:0 32px 80px;background:${pageBackground};color:${textColor};font:15px/1.78 system-ui,-apple-system,"Segoe UI",sans-serif}h1,h2,h3,h4{line-height:1.3}h1{font-size:32px}h2{margin-top:34px;font-size:23px}pre{padding:20px;background:#18202d;color:#dbe5f5;border-radius:9px;overflow:auto}code{font-family:"Cascadia Code",Consolas,monospace}table{border-collapse:collapse;width:100%}th,td{border:1px solid ${borderColor};padding:9px 12px;text-align:left}blockquote{border-left:3px solid ${borderColor};padding-left:18px;color:${secondaryColor}}img{max-width:100%}a{color:#1769e0}</style></head><body>${body}</body></html>`
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${activeName.value}</title><style>html{background:${pageBackground}}body{max-width:860px;margin:40px auto;padding:0 32px 80px;background:${pageBackground};color:${textColor};font:15px/1.78 "JetBrains Mono","Microsoft YaHei UI",monospace}h1,h2,h3,h4{line-height:1.3}h1{font-size:32px}h2{margin-top:34px;font-size:23px}pre{padding:20px;background:#18202d;color:#dbe5f5;border-radius:9px;overflow:auto}code{font-family:"JetBrains Mono","Microsoft YaHei UI",monospace}table{border-collapse:collapse;width:100%}th,td{border:1px solid ${borderColor};padding:9px 12px;text-align:left}blockquote{border-left:3px solid ${borderColor};padding-left:18px;color:${secondaryColor}}img{max-width:100%}a{color:#1769e0}</style></head><body>${body}</body></html>`
 }
 
 async function createPreviewCanvas() {
@@ -831,7 +865,53 @@ function dropOnTreeRoot(event: DragEvent) {
   void store.moveEntry(sourcePath, '')
 }
 
+function setBackgroundPreview(blob: Blob, name: string) {
+  if (backgroundUrl.value) URL.revokeObjectURL(backgroundUrl.value)
+  backgroundUrl.value = URL.createObjectURL(blob)
+  backgroundName.value = name
+  document.documentElement.dataset.hasBackground = 'true'
+}
+
+async function selectAppBackground(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (!file.type.startsWith('image/')) {
+    errorMessage.value = '请选择 PNG、JPG、WebP 等图片文件。'
+    return
+  }
+  if (file.size > 15 * 1024 * 1024) {
+    errorMessage.value = '背景图片不能超过 15 MB。'
+    return
+  }
+  try {
+    await saveBackground(file)
+    setBackgroundPreview(file, file.name)
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '背景图片保存失败。'
+  }
+}
+
+async function clearAppBackground() {
+  try {
+    await removeBackground()
+    if (backgroundUrl.value) URL.revokeObjectURL(backgroundUrl.value)
+    backgroundUrl.value = ''
+    backgroundName.value = ''
+    delete document.documentElement.dataset.hasBackground
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '背景图片移除失败。'
+  }
+}
+
 onMounted(async () => {
+  try {
+    const storedBackground = await loadBackground()
+    if (storedBackground) setBackgroundPreview(storedBackground.blob, storedBackground.name)
+  } catch {
+    // 外观资源读取失败时保持默认背景，不影响文档编辑。
+  }
   compactMedia = window.matchMedia('(max-width: 940px)')
   syncCompactLayout = () => { compactLayout.value = !!compactMedia?.matches }
   syncCompactLayout()
@@ -880,6 +960,7 @@ onMounted(async () => {
   }
 })
 onBeforeUnmount(() => {
+  if (backgroundUrl.value) URL.revokeObjectURL(backgroundUrl.value)
   if (preparedExport.value?.previewUrl) URL.revokeObjectURL(preparedExport.value.previewUrl)
   window.removeEventListener('keydown', keyboardShortcuts)
   document.removeEventListener('pointerdown', dismissSearch)
@@ -895,7 +976,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-shell" :class="{ 'desktop-shell': !isDemo, 'window-maximized': !isDemo && windowMaximized }" @dragenter="enterExternalDrag" @dragover="overExternalDrag" @dragleave="leaveExternalDrag" @drop="dropExternalFiles">
+  <div class="app-shell" :class="{ 'desktop-shell': !isDemo, 'window-maximized': !isDemo && windowMaximized, 'has-custom-background': !!backgroundUrl }" :style="appAppearanceStyle" @dragenter="enterExternalDrag" @dragover="overExternalDrag" @dragleave="leaveExternalDrag" @drop="dropExternalFiles">
     <header class="topbar" data-tauri-drag-region @dblclick.self="!isDemo && toggleMaximizeWindow()">
       <div class="brand-area" data-tauri-drag-region>
         <div class="brand-mark">M</div>
@@ -930,21 +1011,55 @@ onBeforeUnmount(() => {
         </div>
         <span class="topbar-divider" />
         <UiPopover v-model="exportOpen" width="230px">
-          <template #trigger><button class="toolbar-button" :disabled="!activePath" title="导出" @click="activePath && (exportOpen = !exportOpen)"><Download :size="17" /><span>导出</span><ChevronDown :size="13" /></button></template>
+          <template #trigger><button class="toolbar-button export-trigger" :disabled="!activePath" title="导出" @click="activePath && (exportOpen = !exportOpen)"><Download :size="17" /><span>导出</span><ChevronDown class="export-chevron" :size="13" /></button></template>
           <button class="popover-action" :disabled="!!exportingKind" @click="doExport('markdown')"><FileText :size="15" /><span><strong>{{ exportingKind === 'markdown' ? '正在导出…' : 'Markdown 副本' }}</strong><small>保留原始文本与语法</small></span></button>
           <button class="popover-action" :disabled="!!exportingKind" @click="doExport('html')"><Code2 :size="15" /><span><strong>{{ exportingKind === 'html' ? '正在导出…' : 'HTML 网页' }}</strong><small>可在浏览器独立打开</small></span></button>
           <button class="popover-action" :disabled="!!exportingKind" @click="doExport('pdf')"><Download :size="15" /><span><strong>{{ exportingKind === 'pdf' ? '正在生成 PDF…' : 'PDF 文档' }}</strong><small>A4 页面自动分页</small></span></button>
           <button class="popover-action" :disabled="!!exportingKind" @click="doExport('png')"><Eye :size="15" /><span><strong>{{ exportingKind === 'png' ? '正在生成图片…' : 'PNG 长图' }}</strong><small>完整预览高清图片</small></span></button>
           <button v-if="isDemo" class="popover-action" :disabled="backupBusy" @click="downloadWorkspaceBackup"><ArchiveRestore :size="15" /><span><strong>{{ backupBusy ? '正在打包…' : '完整文档包 ZIP' }}</strong><small>包含全部 Markdown 与 assets 图片</small></span></button>
         </UiPopover>
-        <UiPopover v-model="settingsOpen" width="286px">
+        <UiPopover v-model="settingsOpen" width="380px">
           <template #trigger><button class="toolbar-button settings-trigger" title="设置" @click="settingsOpen = !settingsOpen"><Settings :size="17" /><span>设置</span></button></template>
           <div class="settings-panel">
-            <div class="popover-title">编辑器设置</div>
-            <div class="setting-row"><span><strong>主题</strong><small>调整应用外观</small></span><UiSelect v-model="settings.theme" :options="themeOptions" aria-label="选择主题" /></div>
-            <div class="setting-row"><span><strong>文档字号</strong><small>同步调整编辑与预览，12 至 22 像素</small></span><UiNumberStepper v-model="settings.fontSize" :min="12" :max="22" suffix=" px" /></div>
-            <div class="setting-row"><span><strong>Tab 宽度</strong><small>插入空格数量</small></span><UiSelect v-model="settings.tabSize" :options="tabOptions" aria-label="选择 Tab 宽度" /></div>
-            <button v-if="isDemo" class="storage-setting-entry" @click="openStorageManager"><span><HardDrive :size="16" /><i><strong>存储管理</strong><small>查看文档、图片与浏览器占用</small></i></span><ChevronDown :size="14" /></button>
+            <div class="popover-title">设置</div>
+            <div class="settings-tabs" role="tablist" aria-label="设置分类">
+              <button type="button" :class="{ active: settingsSection === 'appearance' }" @click="settingsSection = 'appearance'">外观</button>
+              <button type="button" :class="{ active: settingsSection === 'editor' }" @click="settingsSection = 'editor'">编辑</button>
+              <button type="button" :class="{ active: settingsSection === 'code' }" @click="settingsSection = 'code'">代码块</button>
+            </div>
+            <div v-if="settingsSection === 'appearance'" class="settings-section">
+              <div class="setting-row"><span><strong>明暗外观</strong><small>调整界面亮度</small></span><UiSelect v-model="settings.theme" :options="themeOptions" aria-label="选择明暗外观" /></div>
+              <div class="theme-setting-section">
+                <span><strong>主题配色</strong><small>应用于按钮、选中状态和界面层次</small></span>
+                <div class="theme-palette-grid">
+                  <button v-for="item in colorThemes" :key="item.value" type="button" :class="{ active: settings.colorTheme === item.value }" @click="settings.colorTheme = item.value">
+                    <i><b v-for="color in item.colors" :key="color" :style="{ background: color }" /></i><em>{{ item.label }}</em><Check v-if="settings.colorTheme === item.value" :size="13" />
+                  </button>
+                </div>
+              </div>
+              <div class="background-setting-section">
+                <span><strong>程序背景</strong><small>桌面端与 Web 端都会保存在当前设备</small></span>
+                <input ref="backgroundInput" class="background-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" @change="selectAppBackground">
+                <div v-if="backgroundUrl" class="background-preview" :style="{ backgroundImage: `url(${backgroundUrl})` }">
+                  <span>{{ backgroundName }}</span>
+                  <div><button type="button" @click="backgroundInput?.click()">更换</button><button type="button" class="danger" @click="clearAppBackground">移除</button></div>
+                </div>
+                <button v-else type="button" class="background-picker" @click="backgroundInput?.click()"><ImagePlus :size="18" /><span><strong>选择背景图片</strong><small>建议使用宽幅、低对比度图片</small></span></button>
+                <div v-if="backgroundUrl" class="setting-row compact"><span><strong>面板清晰度</strong><small>数值越高，文字区域越清晰</small></span><UiNumberStepper v-model="settings.backgroundPanelOpacity" :min="70" :max="98" suffix="%" /></div>
+              </div>
+            </div>
+            <div v-else-if="settingsSection === 'editor'" class="settings-section">
+              <div class="setting-row"><span><strong>界面与文档字体</strong><small>JetBrains Mono，中文使用系统字体回退</small></span><span class="font-setting-badge">JetBrains Mono</span></div>
+              <div class="setting-row"><span><strong>文档字号</strong><small>同步调整编辑与预览，12 至 22 像素</small></span><UiNumberStepper v-model="settings.fontSize" :min="12" :max="22" suffix=" px" /></div>
+              <div class="setting-row"><span><strong>Tab 宽度</strong><small>插入空格数量</small></span><UiSelect v-model="settings.tabSize" :options="tabOptions" aria-label="选择 Tab 宽度" /></div>
+              <button v-if="isDemo" class="storage-setting-entry" @click="openStorageManager"><span><HardDrive :size="16" /><i><strong>存储管理</strong><small>查看文档、图片与浏览器占用</small></i></span><ChevronDown :size="14" /></button>
+            </div>
+            <div v-else class="settings-section">
+              <div class="setting-row"><span><strong>显示方式</strong><small>控制较长代码块的展示高度</small></span><UiSelect v-model="settings.codeBlockMode" :options="codeBlockModeOptions" aria-label="选择代码块显示方式" /></div>
+              <div v-if="settings.codeBlockMode === 'limited'" class="setting-row"><span><strong>最大高度</strong><small>超出后可在代码块内滚动</small></span><UiNumberStepper v-model="settings.codeBlockMaxHeight" :min="200" :max="800" :step="20" suffix=" px" /></div>
+              <div class="setting-row"><span><strong>高亮主题</strong><small>只影响预览区域中的代码块</small></span><UiSelect v-model="settings.codeTheme" :options="codeThemeOptions" aria-label="选择代码高亮主题" /></div>
+              <div class="setting-row"><span><strong>长行显示</strong><small>控制超过代码块宽度的内容</small></span><UiSelect v-model="settings.codeWrapMode" :options="codeWrapOptions" aria-label="选择代码长行显示方式" /></div>
+            </div>
           </div>
         </UiPopover>
         <span v-if="!isDemo" class="topbar-divider window-divider" />
@@ -1085,7 +1200,7 @@ onBeforeUnmount(() => {
             <MarkdownEditor v-model="content" :dark="dark" :font-size="settings.fontSize" :tab-size="settings.tabSize" @format-state="formatState = $event" @cursor-line="followEditorCursor" @drop-files="importIntoEditor" @insert-images="store.importImages" />
           </div>
           <div v-if="viewMode === 'split'" class="split-handle" title="拖动调整编辑和预览宽度" @pointerdown="startSplitResize"><span /></div>
-          <div v-show="viewMode !== 'editor'" class="preview-pane"><MarkdownPreview :content="content" :font-size="settings.fontSize" :document-path="activePath" @update:content="content = $event" /></div>
+          <div v-show="viewMode !== 'editor'" class="preview-pane"><MarkdownPreview :content="content" :font-size="settings.fontSize" :document-path="activePath" :code-block-mode="settings.codeBlockMode" :code-block-max-height="settings.codeBlockMaxHeight" :code-theme="settings.codeTheme" :code-wrap-mode="settings.codeWrapMode" @update:content="content = $event" /></div>
         </div>
         <footer class="statusbar">
           <span>{{ statistics.lines }} 行</span><span>{{ statistics.words }} 字</span><span>{{ statistics.chars }} 字符</span>

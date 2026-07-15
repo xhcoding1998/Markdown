@@ -15,8 +15,17 @@ import { Minus, Plus, RotateCcw, X, ZoomIn } from '@lucide/vue'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { isTauri, resolveImageUrl as resolveDesktopImageUrl } from '../services/desktop'
 import { resolveAssetUrl as resolveWebImageUrl } from '../services/webWorkspace'
+import type { CodeBlockMode, CodeTheme, CodeWrapMode } from '../types'
 
-const props = defineProps<{ content: string; fontSize: number; documentPath: string }>()
+const props = defineProps<{
+  content: string
+  fontSize: number
+  documentPath: string
+  codeBlockMode: CodeBlockMode
+  codeBlockMaxHeight: number
+  codeTheme: CodeTheme
+  codeWrapMode: CodeWrapMode
+}>()
 const emit = defineEmits<{ 'update:content': [value: string] }>()
 const article = ref<HTMLElement>()
 const lightboxStage = ref<HTMLElement>()
@@ -530,7 +539,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <article ref="article" class="markdown-body" :style="{ '--preview-font-size': `${fontSize}px` }" v-html="html" @click="handleArticleClick" @pointerdown="handleImageSizePointerDown" @pointermove="handleImageSizePointerMove" @pointerup="handleImageSizePointerUp" @pointercancel="handleImageSizePointerUp" @error.capture="handlePreviewImageError" @load.capture="handlePreviewImageLoad" />
+  <article ref="article" class="markdown-body" :class="[`code-theme-${codeTheme}`, { 'code-blocks-limited': codeBlockMode === 'limited', 'code-blocks-wrap': codeWrapMode === 'wrap' }]" :style="{ '--preview-font-size': `${fontSize}px`, '--code-block-max-height': `${codeBlockMaxHeight}px` }" v-html="html" @click="handleArticleClick" @pointerdown="handleImageSizePointerDown" @pointermove="handleImageSizePointerMove" @pointerup="handleImageSizePointerUp" @pointercancel="handleImageSizePointerUp" @error.capture="handlePreviewImageError" @load.capture="handlePreviewImageLoad" />
   <Teleport to="body">
     <Transition name="image-lightbox">
       <div v-if="lightboxUrl" class="image-lightbox" role="dialog" aria-modal="true" :aria-label="lightboxAlt" @mousedown.self="closeLightbox">
@@ -557,7 +566,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
-.markdown-body { max-width: 860px; margin: 0 auto; padding: 38px 44px 100px; color: var(--text-primary); font-size: var(--preview-font-size, 15px); line-height: 1.78; overflow-wrap: anywhere; }
+.markdown-body { max-width: 860px; margin: 0 auto; padding: 38px 44px 100px; color: var(--text-primary); font-family: var(--font-app); font-size: var(--preview-font-size, 15px); line-height: 1.78; overflow-wrap: anywhere; }
 .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { color: var(--text-strong); line-height: 1.3; font-weight: 720; letter-spacing: -0.02em; }
 .markdown-body h1 { margin: 0 0 32px; font-size: 2.133em; }
 .markdown-body h2 { margin: 34px 0 14px; font-size: 1.533em; }
@@ -574,15 +583,53 @@ onBeforeUnmount(() => {
 .markdown-body th:last-child, .markdown-body td:last-child { border-right: 0; }
 .markdown-body tr:last-child td { border-bottom: 0; }
 .markdown-body th { background: var(--bg-subtle); font-weight: 650; }
-.markdown-body :not(pre) > code { padding: 2px 6px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-family: 'Cascadia Code', Consolas, monospace; font-size: 0.88em; }
+.markdown-body :not(pre) > code { padding: 2px 6px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-family: var(--font-app); font-size: 0.88em; }
 .markdown-body .code-block { position: relative; margin: 18px 0; }
-.markdown-body pre.hljs { margin: 0; padding: 20px; overflow: auto; border-radius: 9px; background: #18202d; color: #dbe5f5; font-size: .867em; line-height: 1.7; }
-.markdown-body .code-copy-button { position: absolute; z-index: 2; top: 10px; right: 10px; height: 28px; padding: 0 9px; border: 1px solid rgba(255,255,255,.13); border-radius: 6px; background: rgba(34,43,57,.88); color: #aeb9c9; cursor: pointer; font-size: 11px; line-height: 1; opacity: 0; backdrop-filter: blur(8px); transition: opacity 140ms ease, color 140ms ease, border-color 140ms ease, background 140ms ease; }
+.markdown-body pre.hljs { margin: 0; padding: 20px; overflow: auto; border: 1px solid var(--code-border); border-radius: 9px; background: var(--code-bg); color: var(--code-text); font-family: var(--font-app); font-size: .867em; font-variant-ligatures: contextual; line-height: 1.7; scrollbar-gutter: stable; }
+.markdown-body pre.hljs code { font-family: inherit; }
+.markdown-body.code-blocks-limited pre.hljs { max-height: var(--code-block-max-height, 420px); }
+.markdown-body.code-blocks-wrap pre.hljs { white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
+.markdown-body .code-copy-button { position: absolute; z-index: 2; top: 10px; right: 10px; height: 28px; padding: 0 9px; border: 1px solid var(--code-button-border); border-radius: 6px; background: var(--code-button-bg); color: var(--code-button-text); cursor: pointer; font-family: var(--font-app); font-size: 11px; font-weight: 500; line-height: 1; opacity: 0; backdrop-filter: blur(8px); transition: opacity 140ms ease, color 140ms ease, border-color 140ms ease, background 140ms ease; }
 .markdown-body .code-block:hover .code-copy-button, .markdown-body .code-copy-button:focus-visible, .markdown-body .code-copy-button.copying, .markdown-body .code-copy-button.copied, .markdown-body .code-copy-button.copy-error { opacity: 1; }
-.markdown-body .code-copy-button:hover { border-color: rgba(255,255,255,.25); background: rgba(52,64,82,.96); color: #f4f7fb; }
+.markdown-body .code-copy-button:hover { border-color: var(--code-button-hover-border); background: var(--code-button-hover-bg); color: var(--code-button-hover-text); }
 .markdown-body .code-copy-button:focus-visible { outline: 2px solid #66a0ff; outline-offset: 2px; }
 .markdown-body .code-copy-button.copied { border-color: rgba(85,200,150,.35); background: rgba(28,89,66,.92); color: #7ce1b5; }
 .markdown-body .code-copy-button.copy-error { border-color: rgba(255,113,130,.35); background: rgba(100,39,49,.92); color: #ff9ba7; }
+.markdown-body.code-theme-vscode { --code-bg: #18202d; --code-text: #dbe5f5; --code-border: #293448; --code-button-bg: rgba(34,43,57,.9); --code-button-text: #aeb9c9; --code-button-border: rgba(255,255,255,.13); --code-button-hover-bg: rgba(52,64,82,.97); --code-button-hover-text: #f4f7fb; --code-button-hover-border: rgba(255,255,255,.25); }
+.markdown-body.code-theme-vscode .hljs-comment, .markdown-body.code-theme-vscode .hljs-quote { color: #77859a; }
+.markdown-body.code-theme-vscode .hljs-keyword, .markdown-body.code-theme-vscode .hljs-selector-tag, .markdown-body.code-theme-vscode .hljs-literal { color: #c792ea; }
+.markdown-body.code-theme-vscode .hljs-string, .markdown-body.code-theme-vscode .hljs-attr, .markdown-body.code-theme-vscode .hljs-addition { color: #c3e88d; }
+.markdown-body.code-theme-vscode .hljs-title, .markdown-body.code-theme-vscode .hljs-section, .markdown-body.code-theme-vscode .hljs-name, .markdown-body.code-theme-vscode .hljs-type { color: #82aaff; }
+.markdown-body.code-theme-vscode .hljs-number, .markdown-body.code-theme-vscode .hljs-symbol, .markdown-body.code-theme-vscode .hljs-bullet { color: #f78c6c; }
+.markdown-body.code-theme-vscode .hljs-built_in, .markdown-body.code-theme-vscode .hljs-meta { color: #ffcb6b; }
+.markdown-body.code-theme-vscode .hljs-variable, .markdown-body.code-theme-vscode .hljs-template-variable, .markdown-body.code-theme-vscode .hljs-params { color: #f07178; }
+
+.markdown-body.code-theme-jetbrains { --code-bg: #2b2b2b; --code-text: #a9b7c6; --code-border: #3d3f41; --code-button-bg: rgba(60,63,65,.94); --code-button-text: #b8c0c8; --code-button-border: #55585a; --code-button-hover-bg: #4c5052; --code-button-hover-text: #fff; --code-button-hover-border: #6b6f72; }
+.markdown-body.code-theme-jetbrains .hljs-comment, .markdown-body.code-theme-jetbrains .hljs-quote { color: #808080; font-style: italic; }
+.markdown-body.code-theme-jetbrains .hljs-keyword, .markdown-body.code-theme-jetbrains .hljs-selector-tag, .markdown-body.code-theme-jetbrains .hljs-literal { color: #cc7832; }
+.markdown-body.code-theme-jetbrains .hljs-string, .markdown-body.code-theme-jetbrains .hljs-attr, .markdown-body.code-theme-jetbrains .hljs-addition { color: #6a8759; }
+.markdown-body.code-theme-jetbrains .hljs-title, .markdown-body.code-theme-jetbrains .hljs-section, .markdown-body.code-theme-jetbrains .hljs-name, .markdown-body.code-theme-jetbrains .hljs-type { color: #ffc66d; }
+.markdown-body.code-theme-jetbrains .hljs-number, .markdown-body.code-theme-jetbrains .hljs-symbol, .markdown-body.code-theme-jetbrains .hljs-bullet { color: #6897bb; }
+.markdown-body.code-theme-jetbrains .hljs-built_in, .markdown-body.code-theme-jetbrains .hljs-meta { color: #bbb529; }
+.markdown-body.code-theme-jetbrains .hljs-variable, .markdown-body.code-theme-jetbrains .hljs-template-variable, .markdown-body.code-theme-jetbrains .hljs-params { color: #9876aa; }
+
+.markdown-body.code-theme-github { --code-bg: #f6f8fa; --code-text: #24292f; --code-border: #d8dee4; --code-button-bg: rgba(255,255,255,.92); --code-button-text: #57606a; --code-button-border: #d0d7de; --code-button-hover-bg: #f3f4f6; --code-button-hover-text: #24292f; --code-button-hover-border: #afb8c1; }
+.markdown-body.code-theme-github .hljs-comment, .markdown-body.code-theme-github .hljs-quote { color: #6e7781; }
+.markdown-body.code-theme-github .hljs-keyword, .markdown-body.code-theme-github .hljs-selector-tag, .markdown-body.code-theme-github .hljs-literal { color: #cf222e; }
+.markdown-body.code-theme-github .hljs-string, .markdown-body.code-theme-github .hljs-attr, .markdown-body.code-theme-github .hljs-addition { color: #0a3069; }
+.markdown-body.code-theme-github .hljs-title, .markdown-body.code-theme-github .hljs-section, .markdown-body.code-theme-github .hljs-name, .markdown-body.code-theme-github .hljs-type { color: #8250df; }
+.markdown-body.code-theme-github .hljs-number, .markdown-body.code-theme-github .hljs-symbol, .markdown-body.code-theme-github .hljs-bullet { color: #0550ae; }
+.markdown-body.code-theme-github .hljs-built_in, .markdown-body.code-theme-github .hljs-meta { color: #953800; }
+.markdown-body.code-theme-github .hljs-variable, .markdown-body.code-theme-github .hljs-template-variable, .markdown-body.code-theme-github .hljs-params { color: #116329; }
+
+.markdown-body.code-theme-nord { --code-bg: #2e3440; --code-text: #d8dee9; --code-border: #434c5e; --code-button-bg: rgba(59,66,82,.94); --code-button-text: #d8dee9; --code-button-border: #4c566a; --code-button-hover-bg: #434c5e; --code-button-hover-text: #eceff4; --code-button-hover-border: #66728a; }
+.markdown-body.code-theme-nord .hljs-comment, .markdown-body.code-theme-nord .hljs-quote { color: #616e88; font-style: italic; }
+.markdown-body.code-theme-nord .hljs-keyword, .markdown-body.code-theme-nord .hljs-selector-tag, .markdown-body.code-theme-nord .hljs-literal { color: #81a1c1; }
+.markdown-body.code-theme-nord .hljs-string, .markdown-body.code-theme-nord .hljs-attr, .markdown-body.code-theme-nord .hljs-addition { color: #a3be8c; }
+.markdown-body.code-theme-nord .hljs-title, .markdown-body.code-theme-nord .hljs-section, .markdown-body.code-theme-nord .hljs-name, .markdown-body.code-theme-nord .hljs-type { color: #88c0d0; }
+.markdown-body.code-theme-nord .hljs-number, .markdown-body.code-theme-nord .hljs-symbol, .markdown-body.code-theme-nord .hljs-bullet { color: #b48ead; }
+.markdown-body.code-theme-nord .hljs-built_in, .markdown-body.code-theme-nord .hljs-meta { color: #ebcb8b; }
+.markdown-body.code-theme-nord .hljs-variable, .markdown-body.code-theme-nord .hljs-template-variable, .markdown-body.code-theme-nord .hljs-params { color: #d08770; }
 .markdown-body a { color: var(--accent); text-decoration: none; }
 .markdown-body a:hover { text-decoration: underline; }
 .markdown-body hr { border: 0; border-top: 1px solid var(--border); margin: 32px 0; }

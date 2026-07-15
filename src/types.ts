@@ -34,9 +34,19 @@ export type Heading = {
 export type SaveStatus = 'saved' | 'dirty' | 'saving' | 'error'
 export type ViewMode = 'split' | 'editor' | 'preview'
 export type ThemeMode = 'light' | 'dark' | 'system'
+export type ColorTheme = 'ocean' | 'forest' | 'violet' | 'clay' | 'graphite'
+export type CodeBlockMode = 'expanded' | 'limited'
+export type CodeTheme = 'vscode' | 'jetbrains' | 'github' | 'nord'
+export type CodeWrapMode = 'scroll' | 'wrap'
 
 export type AppSettings = {
   theme: ThemeMode
+  colorTheme: ColorTheme
+  backgroundPanelOpacity: number
+  codeBlockMode: CodeBlockMode
+  codeBlockMaxHeight: number
+  codeTheme: CodeTheme
+  codeWrapMode: CodeWrapMode
   fontSize: number
   tabSize: number
   autoSaveDelay: number

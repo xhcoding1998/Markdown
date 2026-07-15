@@ -96,7 +96,7 @@ function extensions() {
     }),
     EditorView.theme({
       '&': { height: '100%', background: 'var(--bg-editor)', fontSize: `${props.fontSize}px` },
-      '.cm-scroller': { fontFamily: "'Cascadia Code', 'JetBrains Mono', Consolas, monospace", lineHeight: '1.72' },
+      '.cm-scroller': { fontFamily: "'JetBrains Mono Local', 'Microsoft YaHei UI', monospace", lineHeight: '1.72' },
       '.cm-content': { padding: '20px 0 80px' },
       '.cm-line': { padding: '0 20px 0 14px' },
       '.cm-gutters': { background: 'var(--editor-gutter)', color: 'var(--text-tertiary)', border: 'none', paddingTop: '20px' },
