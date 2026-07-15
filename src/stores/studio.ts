@@ -121,7 +121,7 @@ export const useStudioStore = defineStore('studio', () => {
         tree.value = scopedTree(await desktop.openWorkspace(session.workspacePath))
         await loadTrash()
         const active = findNode(tree.value, session.activePath) || findFirstFile(tree.value)
-        if (active) await openFile(active)
+        if (active) await openFile(active, undefined, { preserveViewMode: true })
         else persistDesktopSession()
       } catch {
         localStorage.removeItem(desktopSessionKey)
@@ -151,7 +151,7 @@ export const useStudioStore = defineStore('studio', () => {
       if (result.mode === 'files') flattenFiles(result.tree).forEach((node) => standalonePaths.add(node.relativePath))
       tree.value = scopedTree(result.tree)
       const active = findNode(tree.value, restoredActivePath) || findFirstFile(tree.value)
-      if (active) await openFile(active)
+      if (active) await openFile(active, undefined, { preserveViewMode: true })
       else persistDesktopSession()
     } catch (error) {
       errorMessage.value = readableError(error)
@@ -236,7 +236,7 @@ export const useStudioStore = defineStore('studio', () => {
     }
   }
 
-  async function openFile(node: FileNode, targetLine?: number) {
+  async function openFile(node: FileNode, targetLine?: number, options: { preserveViewMode?: boolean } = {}) {
     if (node.kind !== 'file') return
     if (saveStatus.value === 'dirty') await save()
     loading.value = true
@@ -247,6 +247,7 @@ export const useStudioStore = defineStore('studio', () => {
       content.value = next
       savedContent.value = next
       saveStatus.value = 'saved'
+      if (!options.preserveViewMode) viewMode.value = 'editor'
       queueMicrotask(() => { suppressWatch = false })
       if (targetLine) window.setTimeout(() => window.dispatchEvent(new CustomEvent('studio:goto-line', { detail: targetLine })), 0)
       persistDesktopSession()
