@@ -40,6 +40,22 @@ struct SearchResult {
     preview: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImageAsset {
+    path: String,
+    reference: String,
+    alt: String,
+    size: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImageData {
+    mime: String,
+    data_base64: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TrashItem {
@@ -48,6 +64,8 @@ struct TrashItem {
     original_relative_path: String,
     kind: String,
     deleted_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    related_assets_original_relative_path: Option<String>,
 }
 
 type CommandResult<T> = Result<T, String>;
@@ -182,7 +200,23 @@ fn rename_entry(
     if target.exists() {
         return Err("目标名称已经存在。".into());
     }
-    fs::rename(source, target).map_err(|error| format!("无法重命名：{error}"))
+    let related_assets = if source.is_file() && is_markdown(&source) {
+        let from = assets_directory_for_document(&source)?;
+        let to = assets_directory_for_document(&target)?;
+        if from.exists() { Some((from, to)) } else { None }
+    } else { None };
+    if let Some((_, asset_target)) = &related_assets {
+        if asset_target.exists() { return Err("目标文档的图片目录已经存在。".into()); }
+    }
+    fs::rename(&source, &target).map_err(|error| format!("无法重命名：{error}"))?;
+    if let Some((asset_source, asset_target)) = &related_assets {
+        if let Err(error) = fs::rename(asset_source, asset_target) {
+            let _ = fs::rename(&target, &source);
+            return Err(format!("无法同步重命名文档图片目录：{error}"));
+        }
+        update_asset_directory_reference(&target, asset_source, asset_target)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -212,7 +246,22 @@ fn move_entry(
     if target.exists() {
         return Err("目标文件夹中已经存在同名项目。".into());
     }
-    fs::rename(source, target).map_err(|error| format!("无法移动项目：{error}"))
+    let related_assets = if source.is_file() && is_markdown(&source) {
+        let from = assets_directory_for_document(&source)?;
+        let to = assets_directory_for_document(&target)?;
+        if from.exists() { Some((from, to)) } else { None }
+    } else { None };
+    if let Some((_, asset_target)) = &related_assets {
+        if asset_target.exists() { return Err("目标位置已经存在文档图片目录。".into()); }
+    }
+    fs::rename(&source, &target).map_err(|error| format!("无法移动项目：{error}"))?;
+    if let Some((asset_source, asset_target)) = &related_assets {
+        if let Err(error) = fs::rename(asset_source, asset_target) {
+            let _ = fs::rename(&target, &source);
+            return Err(format!("无法同步移动文档图片目录：{error}"));
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -277,10 +326,21 @@ fn trash_entry(relative_path: String, state: State<'_, AppState>) -> CommandResu
     let item_dir = trash_root.join(&id);
     fs::create_dir(&item_dir).map_err(|error| format!("无法创建回收站项目：{error}"))?;
     let payload = item_dir.join("content");
+    let related_assets = if target.is_file() && is_markdown(&target) {
+        let path = assets_directory_for_document(&target)?;
+        if path.exists() { Some(path) } else { None }
+    } else { None };
     fs::rename(&target, &payload).map_err(|error| {
         let _ = fs::remove_dir_all(&item_dir);
         format!("无法移动到应用回收站：{error}")
     })?;
+    if let Some(assets) = &related_assets {
+        if let Err(error) = fs::rename(assets, item_dir.join("related-assets")) {
+            let _ = fs::rename(&payload, &target);
+            let _ = fs::remove_dir_all(&item_dir);
+            return Err(format!("无法将文档图片移入应用回收站：{error}"));
+        }
+    }
     let item = TrashItem {
         id,
         name: target
@@ -295,10 +355,16 @@ fn trash_entry(relative_path: String, state: State<'_, AppState>) -> CommandResu
             "file".into()
         },
         deleted_at,
+        related_assets_original_relative_path: related_assets.as_ref().and_then(|path| {
+            path.strip_prefix(&root).ok().map(|value| value.to_string_lossy().replace('\\', "/"))
+        }),
     };
     let metadata =
         serde_json::to_vec_pretty(&item).map_err(|error| format!("无法创建回收站记录：{error}"))?;
     if let Err(error) = fs::write(item_dir.join("metadata.json"), metadata) {
+        if let Some(assets) = &related_assets {
+            let _ = fs::rename(item_dir.join("related-assets"), assets);
+        }
         let _ = fs::rename(&payload, &target);
         let _ = fs::remove_dir_all(&item_dir);
         return Err(format!("无法保存回收站记录：{error}"));
@@ -343,6 +409,20 @@ fn restore_trash(id: String, state: State<'_, AppState>) -> CommandResult<TrashI
     }
     fs::rename(item_dir.join("content"), &target)
         .map_err(|error| format!("无法恢复项目：{error}"))?;
+    if let Some(relative_assets) = &item.related_assets_original_relative_path {
+        let asset_target = resolve_workspace_path(&state, relative_assets)?;
+        if asset_target.exists() {
+            let _ = fs::rename(&target, item_dir.join("content"));
+            return Err("原位置已经存在同名图片目录。".into());
+        }
+        if let Some(parent) = asset_target.parent() {
+            fs::create_dir_all(parent).map_err(|error| format!("无法创建图片目录位置：{error}"))?;
+        }
+        if let Err(error) = fs::rename(item_dir.join("related-assets"), &asset_target) {
+            let _ = fs::rename(&target, item_dir.join("content"));
+            return Err(format!("无法恢复文档图片：{error}"));
+        }
+    }
     fs::remove_dir_all(&item_dir)
         .map_err(|error| format!("项目已恢复，但无法清理回收站记录：{error}"))?;
     Ok(item)
@@ -463,6 +543,75 @@ fn export_binary(target_path: String, data_base64: String) -> CommandResult<()> 
 }
 
 #[tauri::command]
+fn save_image_data(
+    relative_document_path: String,
+    file_name: String,
+    data_base64: String,
+    state: State<'_, AppState>,
+) -> CommandResult<ImageAsset> {
+    if !is_image(Path::new(&file_name)) || Path::new(&file_name).components().count() != 1 {
+        return Err("只支持 PNG、JPEG、GIF、WebP、SVG 或 AVIF 图片。".into());
+    }
+    let bytes = general_purpose::STANDARD
+        .decode(data_base64)
+        .map_err(|error| format!("图片数据无效：{error}"))?;
+    let root = workspace_root(&state)?;
+    let assets = document_assets_directory(&state, &relative_document_path)?;
+    fs::create_dir_all(&assets).map_err(|error| format!("无法创建 assets 目录：{error}"))?;
+    let target = unique_asset_path(&assets, &sanitize_asset_name(&file_name));
+    fs::write(&target, &bytes).map_err(|error| format!("无法保存图片：{error}"))?;
+    image_asset(&root, &relative_document_path, &target, bytes.len() as u64)
+}
+
+#[tauri::command]
+fn import_image_files(
+    source_paths: Vec<String>,
+    relative_document_path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<ImageAsset>> {
+    let root = workspace_root(&state)?;
+    let assets = document_assets_directory(&state, &relative_document_path)?;
+    fs::create_dir_all(&assets).map_err(|error| format!("无法创建 assets 目录：{error}"))?;
+    let mut imported = Vec::new();
+    for source_path in source_paths {
+        let source = PathBuf::from(source_path)
+            .canonicalize()
+            .map_err(|error| format!("无法读取拖入图片：{error}"))?;
+        if !source.is_file() || !is_image(&source) {
+            continue;
+        }
+        let original_name = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or("图片文件名无效。")?;
+        let target = unique_asset_path(&assets, &sanitize_asset_name(original_name));
+        let size = fs::copy(&source, &target).map_err(|error| format!("无法复制图片：{error}"))?;
+        imported.push(image_asset(&root, &relative_document_path, &target, size)?);
+    }
+    if imported.is_empty() {
+        return Err("没有找到可导入的图片。".into());
+    }
+    Ok(imported)
+}
+
+#[tauri::command]
+fn read_image_data(
+    relative_document_path: String,
+    reference: String,
+    state: State<'_, AppState>,
+) -> CommandResult<ImageData> {
+    let target = resolve_document_reference(&state, &relative_document_path, &reference)?;
+    if !target.is_file() || !is_image(&target) {
+        return Err("图片不存在或格式不受支持。".into());
+    }
+    let bytes = fs::read(&target).map_err(|error| format!("无法读取图片：{error}"))?;
+    Ok(ImageData {
+        mime: image_mime(&target).to_string(),
+        data_base64: general_purpose::STANDARD.encode(bytes),
+    })
+}
+
+#[tauri::command]
 fn exit_application(app: tauri::AppHandle) {
     app.exit(0);
 }
@@ -490,6 +639,60 @@ fn resolve_workspace_path(state: &State<'_, AppState>, relative: &str) -> Comman
     }
     let target = workspace_root(state)?.join(relative_path);
     ensure_inside_workspace(state, &target)?;
+    Ok(target)
+}
+
+fn resolve_document_reference(
+    state: &State<'_, AppState>,
+    relative_document_path: &str,
+    reference: &str,
+) -> CommandResult<PathBuf> {
+    let document = Path::new(relative_document_path);
+    if document.is_absolute()
+        || document.components().any(|part| {
+            matches!(
+                part,
+                Component::ParentDir | Component::Prefix(_) | Component::RootDir
+            )
+        })
+    {
+        return Err("文档路径无效。".into());
+    }
+    let reference = reference
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(reference)
+        .replace('\\', "/");
+    let mut normalized = PathBuf::new();
+    if let Some(parent) = document.parent() {
+        for part in parent.components() {
+            if let Component::Normal(value) = part {
+                normalized.push(value);
+            }
+        }
+    }
+    for part in Path::new(&reference).components() {
+        match part {
+            Component::Normal(value) => normalized.push(value),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err("图片路径超出了当前目录。".into());
+                }
+            }
+            Component::Prefix(_) | Component::RootDir => {
+                return Err("图片路径超出了当前目录。".into())
+            }
+        }
+    }
+    let root = workspace_root(state)?;
+    let target = root
+        .join(normalized)
+        .canonicalize()
+        .map_err(|_| "图片不存在。".to_string())?;
+    if !target.starts_with(&root) {
+        return Err("图片路径超出了当前目录。".into());
+    }
     Ok(target)
 }
 
@@ -585,7 +788,9 @@ fn visible_entry(entry: &DirEntry) -> bool {
 }
 
 fn visible_name(name: &str) -> bool {
-    !name.starts_with('.') && !matches!(name, "node_modules" | "target" | "dist")
+    !name.starts_with('.')
+        && !name.to_lowercase().ends_with(".assets")
+        && !matches!(name, "node_modules" | "target" | "dist")
 }
 
 fn is_markdown(path: &Path) -> bool {
@@ -595,12 +800,206 @@ fn is_markdown(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn is_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "avif"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn image_mime(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "avif" => "image/avif",
+        _ => "application/octet-stream",
+    }
+}
+
+fn unique_asset_path(directory: &Path, original_name: &str) -> PathBuf {
+    let direct = directory.join(original_name);
+    if !direct.exists() {
+        return direct;
+    }
+    let path = Path::new(original_name);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("image");
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("png");
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
+    for suffix in 0..1000 {
+        let candidate = directory.join(format!("{stem}-{stamp}-{suffix}.{extension}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    directory.join(format!("image-{stamp}.{extension}"))
+}
+
+fn sanitize_asset_name(original_name: &str) -> String {
+    let path = Path::new(original_name);
+    let raw_stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("image");
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let mut stem = String::new();
+    let mut separator = false;
+    for character in raw_stem.chars() {
+        if character.is_alphanumeric() || matches!(character, '-' | '_') {
+            stem.push(character);
+            separator = false;
+        } else if !separator && !stem.is_empty() {
+            stem.push('-');
+            separator = true;
+        }
+    }
+    let stem = stem.trim_matches('-');
+    format!(
+        "{}.{}",
+        if stem.is_empty() { "image" } else { stem },
+        extension
+    )
+}
+
+fn document_assets_directory(
+    state: &State<'_, AppState>,
+    relative_document_path: &str,
+) -> CommandResult<PathBuf> {
+    let document = resolve_workspace_path(state, relative_document_path)?;
+    let assets = assets_directory_for_document(&document)?;
+    ensure_inside_workspace(state, &assets)?;
+    Ok(assets)
+}
+
+fn assets_directory_for_document(document: &Path) -> CommandResult<PathBuf> {
+    let parent = document.parent().ok_or("The document has no parent directory.")?;
+    let stem = document
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("document");
+    let assets = parent.join(format!("{stem}.assets"));
+    Ok(assets)
+}
+
+fn update_asset_directory_reference(
+    document: &Path,
+    old_assets: &Path,
+    new_assets: &Path,
+) -> CommandResult<()> {
+    let old_name = old_assets.file_name().and_then(|value| value.to_str()).unwrap_or("");
+    let new_name = new_assets.file_name().and_then(|value| value.to_str()).unwrap_or("");
+    if old_name.is_empty() || old_name == new_name { return Ok(()); }
+    let content = fs::read_to_string(document).map_err(|error| format!("无法更新图片引用：{error}"))?;
+    let updated = content.replace(&format!("{old_name}/"), &format!("{new_name}/"));
+    if updated != content {
+        fs::write(document, updated).map_err(|error| format!("无法更新图片引用：{error}"))?;
+    }
+    Ok(())
+}
+
+fn image_asset(
+    root: &Path,
+    relative_document_path: &str,
+    target: &Path,
+    size: u64,
+) -> CommandResult<ImageAsset> {
+    let name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or("图片文件名无效。")?;
+    let path = target
+        .strip_prefix(root)
+        .map_err(|_| "Image path is outside the opened directory.")?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let document_parent = Path::new(relative_document_path).parent().unwrap_or(Path::new(""));
+    let target_relative = Path::new(&path);
+    let from = document_parent
+        .components()
+        .filter_map(|part| match part { Component::Normal(value) => Some(value), _ => None })
+        .collect::<Vec<_>>();
+    let to = target_relative
+        .components()
+        .filter_map(|part| match part { Component::Normal(value) => Some(value), _ => None })
+        .collect::<Vec<_>>();
+    let mut common = 0;
+    while common < from.len() && common < to.len() && from[common] == to[common] {
+        common += 1;
+    }
+    let mut reference_parts = vec!["..".to_string(); from.len() - common];
+    reference_parts.extend(to[common..].iter().map(|part| part.to_string_lossy().into_owned()));
+    let reference = reference_parts.join("/");
+    let alt = Path::new(name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("图片")
+        .to_string();
+    Ok(ImageAsset {
+        path,
+        reference,
+        alt,
+        size,
+    })
+}
+
 fn truncate_preview(line: &str, limit: usize) -> String {
     let trimmed = line.trim();
     if trimmed.chars().count() <= limit {
         return trimmed.to_string();
     }
     format!("{}…", trimmed.chars().take(limit).collect::<String>())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_references_are_relative_to_the_document() {
+        let root = Path::new("workspace");
+        let root_asset = image_asset(root, "README.md", Path::new("workspace/README.assets/cover.png"), 12).unwrap();
+        let nested_asset = image_asset(
+            root,
+            "docs/design/spec.md",
+            Path::new("workspace/docs/design/spec.assets/cover.png"),
+            12,
+        ).unwrap();
+        assert_eq!(root_asset.reference, "README.assets/cover.png");
+        assert_eq!(nested_asset.reference, "spec.assets/cover.png");
+    }
+
+    #[test]
+    fn image_names_are_safe_for_markdown_links() {
+        assert_eq!(sanitize_asset_name("产品 截图 (1).PNG"), "产品-截图-1.png");
+        assert_eq!(sanitize_asset_name("!!!.jpeg"), "image.jpeg");
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -628,6 +1027,9 @@ pub fn run() {
             export_html,
             export_text,
             export_binary,
+            save_image_data,
+            import_image_files,
+            read_image_data,
             exit_application,
         ])
         .run(tauri::generate_context!())

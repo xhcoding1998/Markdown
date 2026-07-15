@@ -512,6 +512,65 @@ export const useStudioStore = defineStore('studio', () => {
     }
   }
 
+  async function importImages(files: File[]) {
+    if (!activePath.value) {
+      errorMessage.value = '请先打开或新建一个 Markdown 文档。'
+      return
+    }
+    try {
+      errorMessage.value = ''
+      const assets = desktop.isTauri()
+        ? await desktop.saveImages(files, activePath.value)
+        : await web.saveImages(files, activePath.value)
+      if (!assets.length) throw new Error('没有找到可导入的图片。')
+      const markdown = assets.map((asset) => `![${asset.alt}](${asset.reference})`).join('\n')
+      window.dispatchEvent(new CustomEvent('studio:insert-text', { detail: markdown }))
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  async function importPathImages(paths: string[]) {
+    if (!desktop.isTauri() || !activePath.value || !paths.length) return
+    try {
+      errorMessage.value = ''
+      const assets = await desktop.importImagePaths(paths, activePath.value)
+      const markdown = assets.map((asset) => `![${asset.alt}](${asset.reference})`).join('\n')
+      window.dispatchEvent(new CustomEvent('studio:insert-text', { detail: markdown }))
+    } catch (error) {
+      errorMessage.value = readableError(error)
+    }
+  }
+
+  async function restoreWebBackup(file: File) {
+    if (desktop.isTauri()) return false
+    loading.value = true
+    try {
+      await save()
+      const result = await web.restoreWorkspaceBackup(file)
+      suppressWatch = true
+      workspacePath.value = result.name
+      workspaceName.value = result.name
+      workspaceMode.value = 'directory'
+      standalonePaths.clear()
+      tree.value = result.tree
+      activePath.value = ''
+      content.value = ''
+      savedContent.value = ''
+      saveStatus.value = 'saved'
+      queueMicrotask(() => { suppressWatch = false })
+      const first = findFirstFile(tree.value)
+      if (first) await openFile(first)
+      else persistDesktopSession()
+      return true
+    } catch (error) {
+      errorMessage.value = readableError(error)
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function importPathFiles(paths: string[], targetDirectory = '') {
     if (!desktop.isTauri() || !paths.length) return
     const markdownPaths = paths.filter((path) => /\.md(?:own)?$/i.test(path))
@@ -589,7 +648,7 @@ export const useStudioStore = defineStore('studio', () => {
     workspacePath, workspaceName, workspaceMode, tree, activePath, activeName, content, saveStatus, trashItems,
     viewMode, settings, searchResults, isSearching, errorMessage, loading, isDemo,
     initializeWorkspace, selectWorkspace, selectFiles, refreshWorkspace, openFile, save, newDocument, newFolder, deleteEntry, renameEntry,
-    moveEntry, importDroppedFiles, importPathFiles, loadTrash, restoreTrashItem, permanentlyDeleteTrashItem,
+    moveEntry, importDroppedFiles, importImages, importPathImages, importPathFiles, restoreWebBackup, loadTrash, restoreTrashItem, permanentlyDeleteTrashItem,
     renameWorkspace, removeWorkspace, performSearch,
     openSearchResult, revealEntry, dismissError, persistSettings,
   }

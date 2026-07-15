@@ -2,8 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import {
-  ArchiveRestore, ArrowUpDown, Bold, Braces, Check, ChevronDown, Code2, Columns2, Copy, Download, Eye, FilePlus2,
-  FileText, FolderOpen, FolderPlus, Hash, Italic, List, ListChecks, Pencil,
+  AlertTriangle, ArchiveRestore, ArrowUpDown, Bold, Braces, Check, ChevronDown, Code2, Columns2, Copy, Download, Eye, FilePlus2,
+  FileText, FolderOpen, FolderPlus, HardDrive, Hash, Image as ImageIcon, Italic, List, ListChecks, Pencil,
   Minus, PanelLeftClose, PanelLeftOpen, Quote, Search, Settings, Square,
   Strikethrough, Trash2, Upload, X,
 } from '@lucide/vue'
@@ -20,6 +20,10 @@ import UiNumberStepper from './components/ui/UiNumberStepper.vue'
 import UiPopover from './components/ui/UiPopover.vue'
 import UiSelect from './components/ui/UiSelect.vue'
 import { exportBinary, isTauri, quitApplication } from './services/desktop'
+import {
+  chooseBackupFile, createWorkspaceBackup, deleteUnusedAssets, inspectWorkspaceBackup, storageSnapshot,
+  type WebBackupSummary, type WebStorageSnapshot,
+} from './services/webWorkspace'
 import type { FileNode, Heading, TrashItem } from './types'
 
 const store = useStudioStore()
@@ -30,10 +34,10 @@ const {
 } = storeToRefs(store)
 
 const storedPanelState = (() => {
-  try { return JSON.parse(localStorage.getItem('md-lai-le-panel-state') || '{}') as { rightOpen?: boolean; activeRightTab?: 'outline' | 'stats' } } catch { return {} }
+  try { return JSON.parse(localStorage.getItem('md-lai-le-panel-state') || '{}') as { rightOpen?: boolean; activeRightTab?: 'outline' | 'inspect' | 'stats' } } catch { return {} }
 })()
 const rightOpen = ref(storedPanelState.rightOpen !== false)
-const activeRightTab = ref<'outline' | 'stats'>(storedPanelState.activeRightTab === 'stats' ? 'stats' : 'outline')
+const activeRightTab = ref<'outline' | 'inspect'>(storedPanelState.activeRightTab === 'inspect' || storedPanelState.activeRightTab === 'stats' ? 'inspect' : 'outline')
 const searchQuery = ref('')
 const searchOpen = ref(false)
 const searchRoot = ref<HTMLElement>()
@@ -44,6 +48,14 @@ const newFolderName = ref('')
 const newMenuOpen = ref(false)
 const fileSortOpen = ref(false)
 const settingsOpen = ref(false)
+const storageOpen = ref(false)
+const storageCleanupOpen = ref(false)
+const storageLoading = ref(false)
+const storageInfo = ref<WebStorageSnapshot | null>(null)
+const backupImportOpen = ref(false)
+const backupBusy = ref(false)
+const backupFile = ref<File | null>(null)
+const backupSummary = ref<WebBackupSummary | null>(null)
 const exportOpen = ref(false)
 const exportingKind = ref<ExportKind | null>(null)
 const exportPreviewOpen = ref(false)
@@ -67,6 +79,7 @@ const editorStage = ref<HTMLElement>()
 const leftSidebar = ref<HTMLElement>()
 const rightSidebar = ref<HTMLElement>()
 const dropActive = ref(false)
+const imageDropActive = ref(false)
 let dragDepth = 0
 let unlistenFileDrop: (() => void) | undefined
 let unlistenWindowResize: (() => void) | undefined
@@ -78,6 +91,8 @@ let searchTimer: number | undefined
 
 type ExportKind = 'markdown' | 'html' | 'pdf' | 'png'
 type FileSortMode = 'name-asc' | 'name-desc' | 'created-desc' | 'created-asc' | 'modified-desc'
+type DocumentIssue = { line: number; title: string; detail: string }
+type DocumentTask = { line: number; text: string; completed: boolean }
 type PreparedExport = {
   kind: ExportKind
   label: string
@@ -131,6 +146,53 @@ const statistics = computed(() => {
   return { words, chars, lines, readingMinutes }
 })
 
+const documentInspection = computed(() => {
+  const issues: DocumentIssue[] = []
+  const tasks: DocumentTask[] = []
+  const seenHeadings = new Map<string, number>()
+  let previousHeadingLevel = 0
+  let hasPrimaryHeading = false
+
+  content.value.split('\n').forEach((line, index) => {
+    const lineNumber = index + 1
+    const markdownHeading = /^(#{1,6})\s+(.+?)\s*$/.exec(line)
+    const htmlHeading = /^\s*<h([1-6])(?:\s[^>]*)?>(.*?)<\/h\1>\s*$/i.exec(line)
+    const headingLevel = markdownHeading?.[1].length || Number(htmlHeading?.[1] || 0)
+    const headingText = (markdownHeading?.[2] || htmlHeading?.[2] || '').replace(/<[^>]+>|[*_`~]/g, '').trim()
+    if (headingLevel) {
+      if (headingLevel === 1) hasPrimaryHeading = true
+      if (previousHeadingLevel && headingLevel > previousHeadingLevel + 1) {
+        issues.push({ line: lineNumber, title: `标题层级从 H${previousHeadingLevel} 跳到 H${headingLevel}`, detail: '建议按顺序递进标题层级' })
+      }
+      const normalized = headingText.toLocaleLowerCase()
+      const firstLine = seenHeadings.get(normalized)
+      if (normalized && firstLine) issues.push({ line: lineNumber, title: `重复标题“${headingText}”`, detail: `首次出现在第 ${firstLine} 行` })
+      else if (normalized) seenHeadings.set(normalized, lineNumber)
+      previousHeadingLevel = headingLevel
+    }
+
+    const task = /^\s*[-*+]\s+\[([ xX])\]\s+(.+?)\s*$/.exec(line)
+    if (task) tasks.push({ line: lineNumber, text: task[2], completed: task[1].toLowerCase() === 'x' })
+    if (/!\[[^\]]*\]\(\s*\)/.test(line)) issues.push({ line: lineNumber, title: '图片地址为空', detail: '请补充本地路径或图片地址' })
+    else if (/\[[^\]]*\]\(\s*\)/.test(line.replace(/!\[[^\]]*\]\([^)]*\)/g, ''))) issues.push({ line: lineNumber, title: '链接地址为空', detail: '请补充链接目标' })
+  })
+
+  if (content.value.trim() && !hasPrimaryHeading) issues.unshift({ line: 1, title: '缺少一级标题', detail: '建议使用一个 H1 作为文档主标题' })
+
+  const links = (content.value.replace(/!\[[^\]]*\]\([^)]*\)/g, '').match(/\[[^\]]*\]\([^)]*\)/g) || []).length + (content.value.match(/<a\s/gi) || []).length
+  const images = (content.value.match(/!\[[^\]]*\]\([^)]*\)/g) || []).length + (content.value.match(/<img\s/gi) || []).length
+  const codeBlocks = Math.floor((content.value.match(/^\s*(```|~~~)/gm) || []).length / 2)
+  return {
+    issues,
+    tasks,
+    pendingTasks: tasks.filter((task) => !task.completed),
+    links,
+    images,
+    codeBlocks,
+    size: new Blob([content.value]).size,
+  }
+})
+
 const workspaceFileCount = computed(() => {
   const countFiles = (nodes: FileNode[]): number => nodes.reduce(
     (total, node) => total + (node.kind === 'file' ? 1 : countFiles(node.children || [])),
@@ -170,6 +232,10 @@ watch([rightOpen, activeRightTab], ([open, tab]) => {
 
 function goToHeading(heading: Heading) {
   window.dispatchEvent(new CustomEvent('studio:goto-line', { detail: heading.line }))
+}
+
+function goToInspectionLine(line: number) {
+  window.dispatchEvent(new CustomEvent('studio:goto-line', { detail: line }))
 }
 
 function followEditorCursor(line: number) {
@@ -536,6 +602,89 @@ function formatExportSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`
 }
 
+async function openStorageManager() {
+  settingsOpen.value = false
+  storageOpen.value = true
+  storageLoading.value = true
+  try {
+    await store.save()
+    storageInfo.value = await storageSnapshot()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    storageLoading.value = false
+  }
+}
+
+async function cleanUnusedAssets() {
+  if (!storageInfo.value?.unreferencedAssets.length) return
+  storageLoading.value = true
+  try {
+    await deleteUnusedAssets(storageInfo.value.unreferencedAssets.map((asset) => asset.path))
+    storageInfo.value = await storageSnapshot()
+    storageCleanupOpen.value = false
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    storageLoading.value = false
+  }
+}
+
+async function downloadWorkspaceBackup() {
+  if (backupBusy.value) return
+  backupBusy.value = true
+  try {
+    await store.save()
+    const backup = await createWorkspaceBackup()
+    const url = URL.createObjectURL(backup.blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = backup.name
+    anchor.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    exportOpen.value = false
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    backupBusy.value = false
+  }
+}
+
+async function selectWorkspaceBackup() {
+  if (backupBusy.value) return
+  const file = await chooseBackupFile()
+  if (!file) return
+  backupBusy.value = true
+  try {
+    const summary = await inspectWorkspaceBackup(file)
+    backupFile.value = file
+    backupSummary.value = summary
+    settingsOpen.value = false
+    storageOpen.value = false
+    backupImportOpen.value = true
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    backupBusy.value = false
+  }
+}
+
+function setBackupImportOpen(value: boolean) {
+  backupImportOpen.value = value
+  if (!value) {
+    backupFile.value = null
+    backupSummary.value = null
+  }
+}
+
+async function confirmWorkspaceBackupImport() {
+  if (!backupFile.value || backupBusy.value) return
+  backupBusy.value = true
+  const restored = await store.restoreWebBackup(backupFile.value)
+  backupBusy.value = false
+  if (restored) setBackupImportOpen(false)
+}
+
 function setExportPreviewOpen(value: boolean) {
   exportPreviewOpen.value = value
   if (value) return
@@ -616,6 +765,7 @@ function hasExternalFiles(event: DragEvent) {
 function enterExternalDrag(event: DragEvent) {
   if (!hasExternalFiles(event)) return
   event.preventDefault()
+  imageDropActive.value = isDemo.value && !!activePath.value && [...(event.dataTransfer?.items || [])].some((item) => item.kind === 'file' && item.type.startsWith('image/'))
   dragDepth += 1
   dropActive.value = true
 }
@@ -629,7 +779,10 @@ function overExternalDrag(event: DragEvent) {
 function leaveExternalDrag(event: DragEvent) {
   if (!hasExternalFiles(event)) return
   dragDepth = Math.max(0, dragDepth - 1)
-  if (!dragDepth) dropActive.value = false
+  if (!dragDepth) {
+    dropActive.value = false
+    imageDropActive.value = false
+  }
 }
 
 function dropExternalFiles(event: DragEvent) {
@@ -637,6 +790,12 @@ function dropExternalFiles(event: DragEvent) {
   event.preventDefault()
   dragDepth = 0
   dropActive.value = false
+  const images = [...event.dataTransfer.files].filter((file) => file.type.startsWith('image/'))
+  imageDropActive.value = false
+  if (isDemo.value && activePath.value && images.length) {
+    void store.importImages(images)
+    return
+  }
   void store.importDroppedFiles(event.dataTransfer.files)
 }
 
@@ -684,10 +843,24 @@ onMounted(async () => {
       closeConfirmOpen.value = true
     })
     unlistenFileDrop = await getCurrentWebviewWindow().onDragDropEvent((event) => {
-      if (event.payload.type === 'enter' || event.payload.type === 'over') dropActive.value = true
-      if (event.payload.type === 'leave') dropActive.value = false
+      if (event.payload.type === 'enter') {
+        dropActive.value = true
+        imageDropActive.value = !!activePath.value && event.payload.paths.length > 0 && event.payload.paths.every((path) => /\.(?:png|jpe?g|gif|webp|svg|avif)$/i.test(path))
+      }
+      if (event.payload.type === 'over') dropActive.value = true
+      if (event.payload.type === 'leave') {
+        dropActive.value = false
+        imageDropActive.value = false
+      }
       if (event.payload.type === 'drop') {
         dropActive.value = false
+        const imagePaths = event.payload.paths.filter((path) => /\.(?:png|jpe?g|gif|webp|svg|avif)$/i.test(path))
+        if (activePath.value && imagePaths.length === event.payload.paths.length) {
+          imageDropActive.value = false
+          void store.importPathImages(imagePaths)
+          return
+        }
+        imageDropActive.value = false
         const scale = window.devicePixelRatio || 1
         const element = document.elementFromPoint(event.payload.position.x / scale, event.payload.position.y / scale) as HTMLElement | null
         const folder = element?.closest<HTMLElement>('.tree-row[data-directory="true"]')
@@ -752,14 +925,16 @@ onBeforeUnmount(() => {
           <button class="popover-action" :disabled="!!exportingKind" @click="doExport('html')"><Code2 :size="15" /><span><strong>{{ exportingKind === 'html' ? '正在导出…' : 'HTML 网页' }}</strong><small>可在浏览器独立打开</small></span></button>
           <button class="popover-action" :disabled="!!exportingKind" @click="doExport('pdf')"><Download :size="15" /><span><strong>{{ exportingKind === 'pdf' ? '正在生成 PDF…' : 'PDF 文档' }}</strong><small>A4 页面自动分页</small></span></button>
           <button class="popover-action" :disabled="!!exportingKind" @click="doExport('png')"><Eye :size="15" /><span><strong>{{ exportingKind === 'png' ? '正在生成图片…' : 'PNG 长图' }}</strong><small>完整预览高清图片</small></span></button>
+          <button v-if="isDemo" class="popover-action" :disabled="backupBusy" @click="downloadWorkspaceBackup"><ArchiveRestore :size="15" /><span><strong>{{ backupBusy ? '正在打包…' : '完整文档包 ZIP' }}</strong><small>包含全部 Markdown 与 assets 图片</small></span></button>
         </UiPopover>
         <UiPopover v-model="settingsOpen" width="286px">
           <template #trigger><button class="toolbar-button settings-trigger" title="设置" @click="settingsOpen = !settingsOpen"><Settings :size="17" /><span>设置</span></button></template>
           <div class="settings-panel">
             <div class="popover-title">编辑器设置</div>
             <div class="setting-row"><span><strong>主题</strong><small>调整应用外观</small></span><UiSelect v-model="settings.theme" :options="themeOptions" aria-label="选择主题" /></div>
-            <div class="setting-row"><span><strong>编辑器字号</strong><small>12 至 22 像素</small></span><UiNumberStepper v-model="settings.fontSize" :min="12" :max="22" suffix=" px" /></div>
+            <div class="setting-row"><span><strong>文档字号</strong><small>同步调整编辑与预览，12 至 22 像素</small></span><UiNumberStepper v-model="settings.fontSize" :min="12" :max="22" suffix=" px" /></div>
             <div class="setting-row"><span><strong>Tab 宽度</strong><small>插入空格数量</small></span><UiSelect v-model="settings.tabSize" :options="tabOptions" aria-label="选择 Tab 宽度" /></div>
+            <button v-if="isDemo" class="storage-setting-entry" @click="openStorageManager"><span><HardDrive :size="16" /><i><strong>存储管理</strong><small>查看文档、图片与浏览器占用</small></i></span><ChevronDown :size="14" /></button>
           </div>
         </UiPopover>
         <span v-if="!isDemo" class="topbar-divider window-divider" />
@@ -784,6 +959,7 @@ onBeforeUnmount(() => {
           <div class="new-create-menu">
             <button type="button" @click="openMarkdownFiles"><span class="create-icon"><FileText :size="16" /></span><span><strong>打开本地文件</strong><small>选择一个或多个 Markdown 文档</small></span></button>
             <button type="button" @click="openLocalDirectory"><span class="create-icon"><FolderOpen :size="16" /></span><span><strong>打开本地目录</strong><small>读取目录中的 Markdown 文档</small></span></button>
+            <button v-if="isDemo" type="button" @click="newMenuOpen = false; selectWorkspaceBackup()"><span class="create-icon"><ArchiveRestore :size="16" /></span><span><strong>导入码档备份</strong><small>恢复 ZIP 中的文档与图片</small></span></button>
           </div>
         </UiPopover>
         <div class="workspace-heading">
@@ -832,7 +1008,7 @@ onBeforeUnmount(() => {
         <div class="right-sidebar">
         <div class="right-tabs">
           <button :class="{ active: activeRightTab === 'outline' }" @click="activeRightTab = 'outline'">大纲</button>
-          <button :class="{ active: activeRightTab === 'stats' }" @click="activeRightTab = 'stats'">统计</button>
+          <button :class="{ active: activeRightTab === 'inspect' }" @click="activeRightTab = 'inspect'">检查</button>
           <button class="right-collapse" title="收起文档导航" @click="rightOpen = false"><PanelLeftClose :size="16" /></button>
         </div>
         <div v-if="activeRightTab === 'outline'" class="outline-list">
@@ -841,11 +1017,32 @@ onBeforeUnmount(() => {
           </button>
           <div v-if="!headings.length" class="panel-empty">添加标题后将在这里生成大纲</div>
         </div>
-        <div v-else class="stats-panel">
-          <div><strong>{{ statistics.words }}</strong><span>字词</span></div>
-          <div><strong>{{ statistics.chars }}</strong><span>字符</span></div>
-          <div><strong>{{ statistics.lines }}</strong><span>行</span></div>
-          <p>预计阅读时间：{{ statistics.readingMinutes }} 分钟</p>
+        <div v-else class="inspection-panel">
+          <section class="inspection-section">
+            <div class="inspection-heading"><strong>文档检查</strong><span :class="{ clear: !documentInspection.issues.length }">{{ documentInspection.issues.length ? `${documentInspection.issues.length} 个问题` : '未发现问题' }}</span></div>
+            <div v-if="!documentInspection.issues.length" class="inspection-clear"><Check :size="15" />文档结构看起来不错</div>
+            <button v-for="issue in documentInspection.issues" :key="`${issue.line}-${issue.title}`" class="inspection-item issue" @click="goToInspectionLine(issue.line)">
+              <AlertTriangle :size="14" />
+              <span><strong>{{ issue.title }}</strong><small>{{ issue.detail }}</small></span>
+              <em>{{ issue.line }}</em>
+            </button>
+          </section>
+          <section class="inspection-section">
+            <div class="inspection-heading"><strong>待办事项</strong><span>{{ documentInspection.pendingTasks.length }} 项未完成</span></div>
+            <div v-if="!documentInspection.tasks.length" class="inspection-empty">文档中暂无任务列表</div>
+            <button v-for="task in documentInspection.tasks" :key="`${task.line}-${task.text}`" class="inspection-item task" :class="{ completed: task.completed }" @click="goToInspectionLine(task.line)">
+              <i><Check v-if="task.completed" :size="10" /></i>
+              <span><strong>{{ task.text }}</strong><small>第 {{ task.line }} 行</small></span>
+            </button>
+          </section>
+          <section class="inspection-section document-details">
+            <div class="inspection-heading"><strong>文档信息</strong></div>
+            <dl><div><dt>位置</dt><dd :title="activePath">{{ activePath }}</dd></div><div><dt>大小</dt><dd>{{ documentInspection.size < 1024 ? `${documentInspection.size} B` : `${(documentInspection.size / 1024).toFixed(1)} KB` }}</dd></div><div><dt>创建</dt><dd>{{ formatFileTime(activeFile?.createdAt) }}</dd></div><div><dt>修改</dt><dd>{{ formatFileTime(activeFile?.modifiedAt) }}</dd></div></dl>
+          </section>
+          <section class="inspection-overview">
+            <span><strong>{{ headings.length }}</strong>标题</span><span><strong>{{ documentInspection.images }}</strong>图片</span><span><strong>{{ documentInspection.links }}</strong>链接</span><span><strong>{{ documentInspection.codeBlocks }}</strong>代码块</span>
+            <p>{{ statistics.words }} 字 · 阅读约 {{ statistics.readingMinutes }} 分钟</p>
+          </section>
         </div>
         <div v-if="activeRightTab === 'outline'" class="right-bottom-stats">
           <div class="panel-title">文档摘要</div>
@@ -859,7 +1056,7 @@ onBeforeUnmount(() => {
 
       <section v-if="activePath" class="content-column">
         <div class="format-toolbar">
-          <button v-if="!rightOpen" class="outline-open-button" title="打开大纲与统计" @click="rightOpen = true"><PanelLeftOpen :size="17" /></button>
+          <button v-if="!rightOpen" class="outline-open-button" title="打开大纲与检查" @click="rightOpen = true"><PanelLeftOpen :size="17" /></button>
           <span v-if="!rightOpen" class="tool-divider" />
           <button title="标题" :class="{ active: formatState.heading }" @click="format('heading')"><span class="format-letter">H</span></button>
           <button title="粗体" :class="{ active: formatState.bold }" @click="format('bold')"><Bold :size="16" /></button>
@@ -875,10 +1072,10 @@ onBeforeUnmount(() => {
 
         <div ref="editorStage" class="editor-stage" :class="`mode-${viewMode}`" :style="splitStyle">
           <div v-show="viewMode !== 'preview'" class="editor-pane">
-            <MarkdownEditor v-model="content" :dark="dark" :font-size="settings.fontSize" :tab-size="settings.tabSize" @format-state="formatState = $event" @cursor-line="followEditorCursor" @drop-files="importIntoEditor" />
+            <MarkdownEditor v-model="content" :dark="dark" :font-size="settings.fontSize" :tab-size="settings.tabSize" @format-state="formatState = $event" @cursor-line="followEditorCursor" @drop-files="importIntoEditor" @insert-images="store.importImages" />
           </div>
           <div v-if="viewMode === 'split'" class="split-handle" title="拖动调整编辑和预览宽度" @pointerdown="startSplitResize"><span /></div>
-          <div v-show="viewMode !== 'editor'" class="preview-pane"><MarkdownPreview :content="content" /></div>
+          <div v-show="viewMode !== 'editor'" class="preview-pane"><MarkdownPreview :content="content" :font-size="settings.fontSize" :document-path="activePath" @update:content="content = $event" /></div>
         </div>
         <footer class="statusbar">
           <span>{{ statistics.lines }} 行</span><span>{{ statistics.words }} 字</span><span>{{ statistics.chars }} 字符</span>
@@ -907,6 +1104,7 @@ onBeforeUnmount(() => {
         <div class="empty-workspace-actions">
           <UiButton variant="primary" @click="openMarkdownFiles"><FileText :size="16" />打开本地文件</UiButton>
           <UiButton variant="secondary" @click="openLocalDirectory"><FolderOpen :size="16" />打开本地目录</UiButton>
+          <UiButton v-if="isDemo" variant="secondary" @click="selectWorkspaceBackup"><ArchiveRestore :size="16" />导入备份</UiButton>
         </div>
       </div>
     </main>
@@ -917,6 +1115,54 @@ onBeforeUnmount(() => {
         <small>文件将创建在当前目录根位置。</small>
         <div class="ui-form-actions"><UiButton variant="secondary" @click="newFileOpen = false">取消</UiButton><UiButton type="submit" variant="primary">创建文件</UiButton></div>
       </form>
+    </UiModal>
+
+    <UiModal v-model="storageOpen" title="存储管理" width="760px">
+      <div v-if="storageLoading && !storageInfo" class="storage-loading">正在统计本地数据…</div>
+      <div v-else-if="storageInfo" class="storage-manager">
+        <div class="storage-manager-actions"><UiButton variant="secondary" :disabled="backupBusy" @click="selectWorkspaceBackup"><Upload :size="15" />导入备份</UiButton><UiButton variant="primary" :disabled="backupBusy || !storageInfo.documents.length" @click="downloadWorkspaceBackup"><Download :size="15" />{{ backupBusy ? '正在处理…' : '导出全部数据' }}</UiButton></div>
+        <section class="storage-summary">
+          <div><span><small>码档数据</small><strong>{{ formatExportSize(storageInfo.totalSize) }}</strong></span><HardDrive :size="22" /></div>
+          <div class="storage-breakdown"><span><i class="document" />文档 {{ formatExportSize(storageInfo.documentBytes) }}</span><span><i class="asset" />图片 {{ formatExportSize(storageInfo.assetBytes) }}</span><span v-if="storageInfo.quota">浏览器可用上限约 {{ formatExportSize(storageInfo.quota) }}</span></div>
+        </section>
+        <section class="storage-section">
+          <div class="storage-section-heading"><span><strong>文档占用</strong><small>{{ storageInfo.documents.length }} 个浏览器本地文档</small></span></div>
+          <div v-if="storageInfo.documents.length" class="storage-list">
+            <div v-for="document in storageInfo.documents" :key="document.path" class="storage-list-item">
+              <span class="storage-type-icon"><FileText :size="16" /></span>
+              <span class="storage-item-copy"><strong :title="document.path">{{ document.path }}</strong><small>正文 {{ formatExportSize(document.size) }} · {{ document.assetCount }} 张图片 {{ formatExportSize(document.assetSize) }}</small></span>
+              <b>{{ formatExportSize(document.totalSize) }}</b>
+            </div>
+          </div>
+          <div v-else class="storage-empty-row">暂无浏览器本地文档</div>
+        </section>
+        <section class="storage-section">
+          <div class="storage-section-heading"><span><strong>图片资源</strong><small>{{ storageInfo.assets.length }} 张，共 {{ formatExportSize(storageInfo.assetBytes) }}</small></span><UiButton v-if="storageInfo.unreferencedAssets.length" size="sm" variant="danger" @click="storageCleanupOpen = true">清理未使用</UiButton></div>
+          <div v-if="storageInfo.assets.length" class="storage-list asset-list">
+            <div v-for="asset in storageInfo.assets" :key="asset.path" class="storage-list-item">
+              <span class="storage-type-icon image"><ImageIcon :size="16" /></span>
+              <span class="storage-item-copy"><strong :title="asset.name">{{ asset.name }}</strong><small>{{ asset.references.length ? `被 ${asset.references.length} 篇文档引用` : '未被任何文档引用' }}</small></span>
+              <b>{{ formatExportSize(asset.size) }}</b>
+            </div>
+          </div>
+          <div v-else class="storage-empty-row">粘贴或拖入图片后会显示在这里</div>
+        </section>
+      </div>
+    </UiModal>
+
+    <UiModal :model-value="backupImportOpen" title="恢复码档备份" @update:model-value="setBackupImportOpen">
+      <div v-if="backupSummary" class="backup-import-summary">
+        <span class="backup-import-icon"><ArchiveRestore :size="24" /></span>
+        <strong>{{ backupSummary.name }}</strong>
+        <small>{{ backupSummary.documentCount }} 个文档 · {{ backupSummary.assetCount }} 张图片 · {{ formatExportSize(backupSummary.totalSize) }}</small>
+        <p>恢复后将替换当前浏览器中的文档集合。当前真实磁盘目录和客户端文件不会受到影响。</p>
+      </div>
+      <div class="ui-form-actions"><UiButton variant="secondary" :disabled="backupBusy" @click="setBackupImportOpen(false)">取消</UiButton><UiButton variant="primary" :disabled="backupBusy" @click="confirmWorkspaceBackupImport">{{ backupBusy ? '正在恢复…' : '确认恢复' }}</UiButton></div>
+    </UiModal>
+
+    <UiModal v-model="storageCleanupOpen" title="清理未使用图片">
+      <div class="delete-copy"><strong>{{ storageInfo?.unreferencedAssets.length || 0 }} 张图片</strong><p>这里只包含由码档创建且已不被任何 Markdown 文档引用的图片；用户原有的图片不会被纳入清理。</p></div>
+      <div class="ui-form-actions"><UiButton variant="secondary" @click="storageCleanupOpen = false">取消</UiButton><UiButton variant="danger" :disabled="storageLoading" @click="cleanUnusedAssets">{{ storageLoading ? '正在清理…' : '确认清理' }}</UiButton></div>
     </UiModal>
 
     <UiModal v-model="newFolderOpen" title="新建文件夹">
@@ -1001,7 +1247,7 @@ onBeforeUnmount(() => {
 
     <Transition name="drop-overlay">
       <div v-if="dropActive" class="workspace-drop-overlay">
-        <div><span class="drop-icon"><Upload :size="24" /></span><strong>{{ workspaceName ? '松开以导入 Markdown 文件' : '松开以打开本地文件' }}</strong><small>{{ workspaceName ? '支持 .md 和 .markdown，可直接拖到左侧文件夹中' : '只打开本次拖入的 Markdown 文档，不扫描父目录' }}</small></div>
+        <div><span class="drop-icon"><ImageIcon v-if="imageDropActive" :size="24" /><Upload v-else :size="24" /></span><strong>{{ imageDropActive ? '松开以插入图片' : workspaceName ? '松开以导入 Markdown 文件' : '松开以打开本地文件' }}</strong><small>{{ imageDropActive ? '图片将保存到浏览器本地 assets，并插入当前文档' : workspaceName ? '支持 .md 和 .markdown，可直接拖到左侧文件夹中' : '只打开本次拖入的 Markdown 文档，不扫描父目录' }}</small></div>
       </div>
     </Transition>
     <div v-if="errorMessage" class="error-toast"><span>{{ errorMessage }}</span><button @click="store.dismissError"><X :size="15" /></button></div>

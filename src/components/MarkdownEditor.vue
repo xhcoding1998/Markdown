@@ -13,6 +13,7 @@ const emit = defineEmits<{
   'format-state': [value: Record<string, boolean>]
   'cursor-line': [line: number]
   'drop-files': [files: FileList]
+  'insert-images': [files: File[]]
 }>()
 
 const host = ref<HTMLElement>()
@@ -59,6 +60,14 @@ function extensions() {
       if (update.selectionSet && update.transactions.some((transaction) => transaction.isUserEvent('select'))) emitCursorLine(update.view)
     }),
     EditorView.domEventHandlers({
+      paste: (event) => {
+        const clipboardEvent = event as ClipboardEvent
+        const images = [...(clipboardEvent.clipboardData?.files || [])].filter((file) => file.type.startsWith('image/'))
+        if (!images.length) return false
+        clipboardEvent.preventDefault()
+        emit('insert-images', images)
+        return true
+      },
       pointerup: (_event, editor) => {
         window.setTimeout(() => emitCursorLine(editor), 0)
         return false
@@ -76,6 +85,11 @@ function extensions() {
         if (!dragEvent.dataTransfer?.files.length) return false
         dragEvent.preventDefault()
         dragEvent.stopPropagation()
+        const images = [...dragEvent.dataTransfer.files].filter((file) => file.type.startsWith('image/'))
+        if (images.length) {
+          emit('insert-images', images)
+          return true
+        }
         emit('drop-files', dragEvent.dataTransfer.files)
         return true
       },
@@ -96,10 +110,10 @@ function extensions() {
         filter: 'drop-shadow(0 0 2px color-mix(in srgb, var(--accent) 72%, transparent))',
       },
       '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground': {
-        background: 'color-mix(in srgb, var(--accent) 22%, transparent) !important',
+        background: 'var(--selection-bg) !important',
       },
       '.cm-content ::selection': {
-        background: 'color-mix(in srgb, var(--accent) 24%, transparent)',
+        background: 'var(--selection-bg)',
       },
     }),
     EditorState.tabSize.of(props.tabSize),
@@ -134,6 +148,18 @@ function goToLine(event: Event) {
   })
   view.focus()
   flashTimer = window.setTimeout(() => view?.dispatch({ effects: clearFlashEffect.of() }), 1250)
+}
+
+function insertText(event: Event) {
+  if (!view) return
+  const text = (event as CustomEvent<string>).detail
+  if (!text) return
+  const selection = view.state.selection.main
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert: text },
+    selection: { anchor: selection.from + text.length },
+  })
+  view.focus()
 }
 
 function applyFormat(event: Event) {
@@ -272,12 +298,14 @@ function emitCursorLine(editor = view) {
 onMounted(() => {
   createEditor()
   window.addEventListener('studio:goto-line', goToLine)
+  window.addEventListener('studio:insert-text', insertText)
   window.addEventListener('studio:format', applyFormat)
 })
 
 onBeforeUnmount(() => {
   window.clearTimeout(flashTimer)
   window.removeEventListener('studio:goto-line', goToLine)
+  window.removeEventListener('studio:insert-text', insertText)
   window.removeEventListener('studio:format', applyFormat)
   view?.destroy()
 })

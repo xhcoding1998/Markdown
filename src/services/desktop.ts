@@ -3,6 +3,8 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import type { FileNode, SearchResult, TrashItem } from '../types'
 
+export type DesktopImageAsset = { path: string; reference: string; alt: string; size: number }
+
 export const isTauri = () => '__TAURI_INTERNALS__' in window
 
 export async function chooseWorkspace(): Promise<string | null> {
@@ -57,6 +59,33 @@ export async function moveEntry(relativePath: string, targetDirectory: string): 
 
 export async function importFiles(sourcePaths: string[], targetDirectory = ''): Promise<number> {
   return invoke<number>('import_files', { sourcePaths, targetDirectory })
+}
+
+export async function saveImages(files: File[], relativeDocumentPath: string): Promise<DesktopImageAsset[]> {
+  const results: DesktopImageAsset[] = []
+  for (const [index, file] of files.filter((item) => item.type.startsWith('image/')).entries()) {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    results.push(await invoke<DesktopImageAsset>('save_image_data', {
+      relativeDocumentPath,
+      fileName: createImageName(file, index),
+      dataBase64: bytesToBase64(bytes),
+    }))
+  }
+  return results
+}
+
+export async function importImagePaths(sourcePaths: string[], relativeDocumentPath: string): Promise<DesktopImageAsset[]> {
+  return invoke<DesktopImageAsset[]>('import_image_files', { sourcePaths, relativeDocumentPath })
+}
+
+export async function resolveImageUrl(reference: string, relativeDocumentPath: string): Promise<string | null> {
+  if (/^(?:data:|https?:|blob:|\/\/)/i.test(reference)) return null
+  try {
+    const image = await invoke<{ mime: string; dataBase64: string }>('read_image_data', { relativeDocumentPath, reference })
+    return `data:${image.mime};base64,${image.dataBase64}`
+  } catch {
+    return null
+  }
 }
 
 export async function trashEntry(relativePath: string): Promise<void> {
@@ -158,4 +187,11 @@ export function bytesToBase64(bytes: Uint8Array) {
     binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
   }
   return btoa(binary)
+}
+
+function createImageName(file: File, index: number) {
+  const extension = file.name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() || file.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png'
+  const stem = file.name.replace(/\.[^.]+$/, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 32) || 'image'
+  const random = crypto.getRandomValues(new Uint32Array(1))[0].toString(36).slice(0, 6)
+  return `${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}-${index + 1}-${random}-${stem}.${extension}`
 }
