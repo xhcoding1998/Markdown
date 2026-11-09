@@ -45,7 +45,6 @@ let imageSizeDrag: { handle: HTMLElement; frame: HTMLElement; source: string; po
 let jumpTimer: number | undefined
 let assetGeneration = 0
 let columnResizeDrag: { table: HTMLTableElement; cells: HTMLElement[]; colIndex: number; startX: number; startWidths: number[] } | undefined
-const savedColumnWidths = new Map<string, number[]>()
 
 hljs.registerLanguage('bash', bash)
 hljs.registerLanguage('css', css)
