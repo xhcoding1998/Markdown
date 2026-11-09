@@ -18,6 +18,8 @@ const defaultSettings: AppSettings = {
   splitRatio: 0.5,
   leftSidebarWidth: 250,
   rightSidebarWidth: 224,
+  immersivePageWidth: 860,
+  immersivePaper: 'warm',
 }
 
 const desktopSessionKey = 'md-lai-le-desktop-session'
@@ -47,7 +49,10 @@ export const useStudioStore = defineStore('studio', () => {
   const activeName = computed(() => activePath.value.split(/[\\/]/).pop() || '未命名文档')
   const isDemo = computed(() => !desktop.isTauri())
 
+  const cursorLine = ref(0)
+
   let saveTimer: number | undefined
+  let cursorPersistTimer: number | undefined
   let suppressWatch = false
   const standalonePaths = new Set<string>()
 
@@ -63,6 +68,7 @@ export const useStudioStore = defineStore('studio', () => {
       workspaceMode: workspaceMode.value,
       standalonePaths: [...standalonePaths],
       activePath: activePath.value,
+      cursorLine: cursorLine.value,
     }))
   }
 
@@ -119,6 +125,7 @@ export const useStudioStore = defineStore('studio', () => {
           workspaceMode: 'files' | 'directory'
           standalonePaths: string[]
           activePath: string
+          cursorLine?: number
         }
         workspaceMode.value = session.workspaceMode === 'files' ? 'files' : 'directory'
         workspacePath.value = session.workspacePath
@@ -128,7 +135,7 @@ export const useStudioStore = defineStore('studio', () => {
         tree.value = scopedTree(await desktop.openWorkspace(session.workspacePath))
         await loadTrash()
         const active = findNode(tree.value, session.activePath) || findFirstFile(tree.value)
-        if (active) await openFile(active, undefined, { preserveViewMode: true })
+        if (active) await openFile(active, session.cursorLine || undefined)
         else persistDesktopSession()
       } catch {
         localStorage.removeItem(desktopSessionKey)
@@ -144,10 +151,14 @@ export const useStudioStore = defineStore('studio', () => {
     try {
       const result = await web.initialize()
       let restoredActivePath = ''
+      let restoredCursorLine = 0
       try {
         const stored = localStorage.getItem(webSessionKey)
-        const session = stored ? JSON.parse(stored) as { workspacePath?: string; activePath?: string } : null
-        if (session?.workspacePath === result.name) restoredActivePath = session.activePath || ''
+        const session = stored ? JSON.parse(stored) as { workspacePath?: string; activePath?: string; cursorLine?: number } : null
+        if (session?.workspacePath === result.name) {
+          restoredActivePath = session.activePath || ''
+          restoredCursorLine = session.cursorLine || 0
+        }
       } catch {
         localStorage.removeItem(webSessionKey)
       }
@@ -158,7 +169,7 @@ export const useStudioStore = defineStore('studio', () => {
       if (result.mode === 'files') flattenFiles(result.tree).forEach((node) => standalonePaths.add(node.relativePath))
       tree.value = scopedTree(result.tree)
       const active = findNode(tree.value, restoredActivePath) || findFirstFile(tree.value)
-      if (active) await openFile(active, undefined, { preserveViewMode: true })
+      if (active) await openFile(active, restoredCursorLine || undefined)
       else persistDesktopSession()
     } catch (error) {
       errorMessage.value = readableError(error)
@@ -243,7 +254,7 @@ export const useStudioStore = defineStore('studio', () => {
     }
   }
 
-  async function openFile(node: FileNode, targetLine?: number, options: { preserveViewMode?: boolean } = {}) {
+  async function openFile(node: FileNode, targetLine?: number) {
     if (node.kind !== 'file') return
     if (saveStatus.value === 'dirty') await save()
     loading.value = true
@@ -254,7 +265,6 @@ export const useStudioStore = defineStore('studio', () => {
       content.value = next
       savedContent.value = next
       saveStatus.value = 'saved'
-      if (!options.preserveViewMode) viewMode.value = 'editor'
       queueMicrotask(() => { suppressWatch = false })
       if (targetLine) window.setTimeout(() => window.dispatchEvent(new CustomEvent('studio:goto-line', { detail: targetLine })), 0)
       persistDesktopSession()
@@ -287,6 +297,11 @@ export const useStudioStore = defineStore('studio', () => {
     const normalized = name.trim().endsWith('.md') ? name.trim() : `${name.trim()}.md`
     if (!normalized || normalized === '.md') return
     try {
+      if (!workspacePath.value && !desktop.isTauri()) {
+        workspacePath.value = '默认文件'
+        workspaceName.value = '默认文件'
+        workspaceMode.value = 'files'
+      }
       const node = desktop.isTauri() ? await desktop.createDocument(normalized) : await web.createDocument(normalized)
       if (workspaceMode.value === 'files') standalonePaths.add(normalized)
       await refreshWorkspace()
@@ -451,6 +466,12 @@ export const useStudioStore = defineStore('studio', () => {
     } catch (error) {
       errorMessage.value = readableError(error)
     }
+  }
+
+  function setCursorLine(line: number) {
+    cursorLine.value = line
+    window.clearTimeout(cursorPersistTimer)
+    cursorPersistTimer = window.setTimeout(persistDesktopSession, 500)
   }
 
   function dismissError() {
@@ -657,7 +678,7 @@ export const useStudioStore = defineStore('studio', () => {
     initializeWorkspace, selectWorkspace, selectFiles, refreshWorkspace, openFile, save, newDocument, newFolder, deleteEntry, renameEntry,
     moveEntry, importDroppedFiles, importImages, importPathImages, importPathFiles, restoreWebBackup, loadTrash, restoreTrashItem, permanentlyDeleteTrashItem,
     renameWorkspace, removeWorkspace, performSearch,
-    openSearchResult, revealEntry, dismissError, persistSettings,
+    openSearchResult, revealEntry, setCursorLine, dismissError, persistSettings,
   }
 })
 

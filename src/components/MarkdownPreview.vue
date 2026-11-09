@@ -44,6 +44,8 @@ let pendingPresentationContent = ''
 let imageSizeDrag: { handle: HTMLElement; frame: HTMLElement; source: string; pointerId: number; width: number; startX: number; startWidth: number; availableWidth: number; side: 'left' | 'right'; centered: boolean } | undefined
 let jumpTimer: number | undefined
 let assetGeneration = 0
+let columnResizeDrag: { table: HTMLTableElement; cells: HTMLElement[]; colIndex: number; startX: number; startWidths: number[] } | undefined
+const savedColumnWidths = new Map<string, number[]>()
 
 hljs.registerLanguage('bash', bash)
 hljs.registerLanguage('css', css)
@@ -97,10 +99,12 @@ md.core.ruler.after('inline', 'task-list-items', (state) => {
 
     const checked = task[1].toLowerCase() === 'x'
     textToken.content = textToken.content.slice(task[0].length)
+    const listItemToken = state.tokens[openItems[openItems.length - 1]]
+    const sourceLine = listItemToken.map ? listItemToken.map[0] + 1 : 0
     const checkbox = new state.Token('html_inline', '', 0)
-    checkbox.content = `<input class="task-checkbox" type="checkbox" disabled aria-label="${checked ? '已完成' : '未完成'}"${checked ? ' checked' : ''}>`
+    checkbox.content = `<input class="task-checkbox" type="checkbox" data-task-line="${sourceLine}" aria-label="${checked ? '已完成' : '未完成'}"${checked ? ' checked' : ''}>`
     token.children.unshift(checkbox)
-    state.tokens[openItems[openItems.length - 1]].attrJoin('class', 'task-list-item')
+    listItemToken.attrJoin('class', 'task-list-item')
   })
 })
 
@@ -177,6 +181,12 @@ async function refreshAssetUrls() {
 
 const assetReferenceSignature = computed(() => imageReferences(props.content).map((reference) => reference.split('#')[0]).join('\n'))
 watch(() => [assetReferenceSignature.value, props.documentPath], refreshAssetUrls, { immediate: true })
+watch(() => props.documentPath, () => {
+  nextTick(() => {
+    const container = article.value?.closest('.preview-pane, .immersive-scroll') as HTMLElement | null
+    if (container) container.scrollTop = 0
+  })
+})
 watch(() => props.content, (value) => {
   if (value === pendingPresentationContent) {
     pendingPresentationContent = ''
@@ -190,6 +200,7 @@ watch(html, async () => {
   article.value?.querySelectorAll<HTMLImageElement>('.preview-image').forEach((image) => {
     if (image.complete && image.naturalWidth === 0) showMissingImage(image)
   })
+  setupTableResize()
 }, { immediate: true })
 
 async function copyCode(event: MouseEvent) {
@@ -233,7 +244,102 @@ async function copyCode(event: MouseEvent) {
   }, 1600))
 }
 
+function readTableWidths(sourceLine: number): number[] | undefined {
+  if (sourceLine <= 1) return undefined
+  const prevLine = props.content.split('\n')[sourceLine - 2]
+  const match = prevLine && /^\s*<!--\s*madang-table:\s*([\d.,\s]+)\s*-->/.exec(prevLine)
+  if (!match) return undefined
+  return match[1].split(',').map((s) => parseFloat(s.trim())).filter((w) => w > 0)
+}
+
+function saveTableWidths(table: HTMLTableElement, cells: HTMLElement[]) {
+  const sourceLine = Number(table.dataset.sourceLine)
+  if (!sourceLine) return
+  const tableWidth = table.offsetWidth
+  const widths = cells.map((c) => Math.round((c.offsetWidth / tableWidth) * 100))
+  widths[widths.length - 1] += 100 - widths.reduce((a, b) => a + b, 0)
+  const comment = `<!-- madang-table: ${widths.join(',')} -->`
+  const lines = props.content.split('\n')
+  const lineIndex = sourceLine - 1
+  if (lineIndex > 0 && /^\s*<!--\s*madang-table:/.test(lines[lineIndex - 1])) {
+    lines[lineIndex - 1] = comment
+  } else {
+    lines.splice(lineIndex, 0, comment)
+  }
+  pendingPresentationContent = lines.join('\n')
+  emit('update:content', pendingPresentationContent)
+}
+
+function setupTableResize() {
+  if (!article.value) return
+  article.value.querySelectorAll<HTMLTableElement>('table').forEach((table) => {
+    const headerRow = table.querySelector('tr')
+    if (!headerRow) return
+    const cells = [...headerRow.querySelectorAll<HTMLElement>('th, td')]
+    if (cells.length < 2) return
+
+    const sourceLine = Number(table.dataset.sourceLine)
+    const savedWidths = readTableWidths(sourceLine)
+    if (savedWidths && savedWidths.length === cells.length) {
+      table.style.tableLayout = 'fixed'
+      cells.forEach((c, i) => { c.style.width = `${savedWidths[i]}%` })
+    }
+
+    cells.slice(0, -1).forEach((cell, index) => {
+      cell.style.position = 'relative'
+      const handle = document.createElement('span')
+      handle.className = 'table-col-resize'
+      handle.addEventListener('pointerdown', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (!table.style.tableLayout) {
+          const tableWidth = table.offsetWidth
+          cells.forEach((c) => { c.style.width = `${(c.offsetWidth / tableWidth) * 100}%` })
+          table.style.tableLayout = 'fixed'
+        }
+        columnResizeDrag = { table, cells, colIndex: index, startX: e.clientX, startWidths: cells.map((c) => c.offsetWidth) }
+        handle.setPointerCapture(e.pointerId)
+        table.classList.add('resizing-columns')
+      })
+      handle.addEventListener('pointermove', (e) => {
+        if (!columnResizeDrag) return
+        const delta = e.clientX - columnResizeDrag.startX
+        const tableWidth = columnResizeDrag.table.offsetWidth
+        const leftWidth = Math.max(40, columnResizeDrag.startWidths[columnResizeDrag.colIndex] + delta)
+        const rightWidth = Math.max(40, columnResizeDrag.startWidths[columnResizeDrag.colIndex + 1] - delta)
+        columnResizeDrag.cells[columnResizeDrag.colIndex].style.width = `${(leftWidth / tableWidth) * 100}%`
+        columnResizeDrag.cells[columnResizeDrag.colIndex + 1].style.width = `${(rightWidth / tableWidth) * 100}%`
+      })
+      handle.addEventListener('pointerup', () => {
+        if (columnResizeDrag) {
+          saveTableWidths(columnResizeDrag.table, columnResizeDrag.cells)
+          columnResizeDrag.table.classList.remove('resizing-columns')
+          columnResizeDrag = undefined
+        }
+      })
+      cell.appendChild(handle)
+    })
+  })
+}
+
+function toggleTaskCheckbox(line: number) {
+  const lines = props.content.split('\n')
+  const index = line - 1
+  if (index < 0 || index >= lines.length) return
+  const updated = lines[index].replace(/\[([ xX])\]/, (_, state: string) => state === ' ' ? '[x]' : '[ ]')
+  if (updated === lines[index]) return
+  lines[index] = updated
+  emit('update:content', lines.join('\n'))
+}
+
 function handleArticleClick(event: MouseEvent) {
+  const checkbox = (event.target as HTMLElement).closest<HTMLInputElement>('.task-checkbox')
+  if (checkbox) {
+    const line = Number(checkbox.dataset.taskLine)
+    if (line > 0) toggleTaskCheckbox(line)
+    return
+  }
+
   const command = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-image-align], [data-image-size]')
   if (command) {
     event.preventDefault()
@@ -576,13 +682,18 @@ onBeforeUnmount(() => {
 .markdown-body ul, .markdown-body ol { padding-left: 26px; }
 .markdown-body li { margin: 7px 0; }
 .markdown-body .task-list-item { list-style: none; }
-.markdown-body .task-checkbox { width: 15px; height: 15px; margin: 0 8px 0 -23px; border: 1px solid var(--border-strong); border-radius: 3px; appearance: none; background: var(--bg-panel); vertical-align: -2px; pointer-events: none; }
+.markdown-body .task-checkbox { width: 15px; height: 15px; margin: 0 8px 0 -23px; border: 1px solid var(--border-strong); border-radius: 3px; appearance: none; background: var(--bg-panel); vertical-align: -2px; cursor: pointer; transition: border-color 140ms ease, background-color 140ms ease; }
+.markdown-body .task-checkbox:hover { border-color: var(--accent); }
 .markdown-body .task-checkbox:checked { border-color: var(--accent); background-color: var(--accent); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='white' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m4 8 2.5 2.5L12 5'/%3E%3C/svg%3E"); }
 .markdown-body table { width: 100%; margin: 16px 0; border-collapse: separate; border-spacing: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; font-size: .933em; }
 .markdown-body th, .markdown-body td { padding: 9px 12px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); text-align: left; }
 .markdown-body th:last-child, .markdown-body td:last-child { border-right: 0; }
 .markdown-body tr:last-child td { border-bottom: 0; }
-.markdown-body th { background: var(--bg-subtle); font-weight: 650; }
+.markdown-body th { position: relative; background: var(--bg-subtle); font-weight: 650; }
+.markdown-body .table-col-resize { position: absolute; z-index: 2; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; }
+.markdown-body .table-col-resize::after { position: absolute; top: 4px; bottom: 4px; left: 2px; width: 2px; border-radius: 1px; background: transparent; content: ''; transition: background 140ms ease; }
+.markdown-body .table-col-resize:hover::after, .markdown-body table.resizing-columns .table-col-resize::after { background: var(--accent); }
+.markdown-body table.resizing-columns { user-select: none; }
 .markdown-body :not(pre) > code { padding: 2px 6px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-family: var(--font-app); font-size: 0.88em; }
 .markdown-body .code-block { position: relative; margin: 18px 0; }
 .markdown-body pre.hljs { margin: 0; padding: 20px; overflow: auto; border: 1px solid var(--code-border); border-radius: 9px; background: var(--code-bg); color: var(--code-text); font-family: var(--font-app); font-size: .867em; font-variant-ligatures: contextual; line-height: 1.7; scrollbar-gutter: stable; }

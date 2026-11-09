@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import {
-  AlertTriangle, ArchiveRestore, ArrowUpDown, Bold, Braces, Check, ChevronDown, Code2, Columns2, Copy, Download, Eye, FilePlus2,
+  AlertTriangle, ArchiveRestore, ArrowUpDown, Bold, Braces, Check, ChevronDown, ChevronLeft, ChevronRight, Code2, Columns2, Copy, Download, Eye, FilePlus2,
   FileText, FolderOpen, FolderPlus, HardDrive, Hash, Image as ImageIcon, ImagePlus, Italic, List, ListChecks, Pencil,
-  Minus, PanelLeftClose, PanelLeftOpen, Quote, Search, Settings, Square,
+  Maximize2, Minus, PanelLeftClose, PanelLeftOpen, Quote, Search, Settings, Square,
   Strikethrough, Trash2, Upload, X,
 } from '@lucide/vue'
 import MarkdownIt from 'markdown-it'
@@ -77,6 +77,8 @@ const workspaceRenameName = ref('')
 const workspaceRemoveOpen = ref(false)
 const closeConfirmOpen = ref(false)
 const exitInProgress = ref(false)
+const immersiveMode = ref(false)
+const immersiveSidePanel = ref<'' | 'outline' | 'files'>('')
 const windowMaximized = ref(false)
 const compactLayout = ref(false)
 const viewportWidth = ref(window.innerWidth)
@@ -275,11 +277,120 @@ function goToInspectionLine(line: number) {
 
 function followEditorCursor(line: number) {
   window.dispatchEvent(new CustomEvent('studio:cursor-line', { detail: line }))
+  store.setCursorLine(line)
 }
 
 function selectViewMode(mode: 'editor' | 'split' | 'preview') {
   if (!activePath.value) return
   viewMode.value = mode
+}
+
+const paperOptions = [
+  { value: 'white' as const, label: '白纸', desc: '清爽白底' },
+  { value: 'warm' as const, label: '暖纸', desc: '温暖米黄' },
+  { value: 'parchment' as const, label: '羊皮纸', desc: '古卷质感' },
+  { value: 'dark' as const, label: '夜读', desc: '深色护眼' },
+]
+let preImmersiveViewMode: 'editor' | 'split' | 'preview' = 'split'
+const readerRef = ref<HTMLElement | null>(null)
+const readerFlowRef = ref<HTMLElement | null>(null)
+const readerPage = ref(0)
+const readerTotalPages = ref(1)
+let readerRO: ResizeObserver | null = null
+
+let readerStride = 0
+
+function calcReaderPages() {
+  const flow = readerFlowRef.value
+  if (!flow) return
+  flow.style.transition = 'none'
+  flow.style.transform = 'none'
+  void flow.offsetWidth
+  const w = flow.clientWidth
+  const gap = parseFloat(getComputedStyle(flow).columnGap) || 60
+  readerStride = w + gap
+  const totalWidth = flow.scrollWidth
+  if (!w) return
+  readerTotalPages.value = Math.max(1, Math.ceil(totalWidth / readerStride))
+  readerPage.value = Math.min(readerPage.value, readerTotalPages.value - 1)
+  flow.style.transform = `translateX(-${readerPage.value * readerStride}px)`
+}
+
+function navigateToPage(page: number, animate = true) {
+  const flow = readerFlowRef.value
+  if (!flow || !readerStride) return
+  readerPage.value = Math.max(0, Math.min(page, readerTotalPages.value - 1))
+  flow.style.transition = animate ? 'transform 400ms cubic-bezier(.4, 0, .2, 1)' : 'none'
+  flow.style.transform = `translateX(-${readerPage.value * readerStride}px)`
+}
+
+function readerNext() { navigateToPage(readerPage.value + 1) }
+function readerPrev() { navigateToPage(readerPage.value - 1) }
+
+function handleReaderClick(e: MouseEvent) {
+  if ((e.target as HTMLElement).closest('a, button, input, .task-checkbox, .reader-footer')) return
+  const rect = readerRef.value?.getBoundingClientRect()
+  if (!rect) return
+  const x = e.clientX - rect.left
+  if (x < rect.width * 0.3) readerPrev()
+  else if (x > rect.width * 0.7) readerNext()
+}
+
+function jumpToPage(e: Event) {
+  navigateToPage(+(e.target as HTMLInputElement).value - 1)
+}
+
+function goToReaderHeading(heading: Heading) {
+  const flow = readerFlowRef.value
+  if (!flow || !readerStride) return
+  flow.style.transition = 'none'
+  flow.style.transform = 'none'
+  void flow.offsetWidth
+  const el = flow.querySelector(`[id="${heading.id}"]`) as HTMLElement
+  if (!el) { calcReaderPages(); return }
+  navigateToPage(Math.floor(el.offsetLeft / readerStride))
+  immersiveSidePanel.value = ''
+}
+
+function enterImmersiveMode() {
+  if (!activePath.value) return
+  preImmersiveViewMode = viewMode.value
+  viewMode.value = 'preview'
+  immersiveMode.value = true
+  readerPage.value = 0
+  nextTick(() => {
+    setupReaderObservers()
+    calcReaderPages()
+  })
+}
+function exitImmersiveMode() {
+  immersiveMode.value = false
+  immersiveSidePanel.value = ''
+  viewMode.value = preImmersiveViewMode
+  teardownReaderObservers()
+}
+
+function setupReaderObservers() {
+  teardownReaderObservers()
+  const flow = readerFlowRef.value
+  if (flow) {
+    readerRO = new ResizeObserver(() => calcReaderPages())
+    readerRO.observe(flow)
+  }
+}
+function teardownReaderObservers() {
+  readerRO?.disconnect()
+  readerRO = null
+}
+
+function toggleImmersivePanel(panel: 'outline' | 'files') {
+  immersiveSidePanel.value = immersiveSidePanel.value === panel ? '' : panel
+}
+function immersiveOpenFile(node: import('./types').FileNode) {
+  immersiveSidePanel.value = ''
+  readerPage.value = 0
+  store.openFile(node)
+  nextTick(() => calcReaderPages())
 }
 
 function selectFileSort(mode: FileSortMode) {
@@ -787,6 +898,11 @@ async function copyPreparedImage() {
 }
 
 function keyboardShortcuts(event: KeyboardEvent) {
+  if (immersiveMode.value) {
+    if (event.key === 'Escape') { exitImmersiveMode(); return }
+    if (event.key === 'ArrowRight' || event.key === 'PageDown') { readerNext(); event.preventDefault(); return }
+    if (event.key === 'ArrowLeft' || event.key === 'PageUp') { readerPrev(); event.preventDefault(); return }
+  }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
     event.preventDefault()
     store.save()
@@ -972,6 +1088,7 @@ onBeforeUnmount(() => {
   unlistenCloseRequested?.()
   if (syncCompactLayout) compactMedia?.removeEventListener('change', syncCompactLayout)
   window.removeEventListener('resize', syncViewportWidth)
+  teardownReaderObservers()
 })
 </script>
 
@@ -1009,6 +1126,7 @@ onBeforeUnmount(() => {
           <button :disabled="!activePath" :class="{ active: viewMode === 'editor' }" title="仅显示编辑区" @click="selectViewMode('editor')"><Code2 :size="15" /><span>编辑</span></button>
           <button :disabled="!activePath" :class="{ active: viewMode === 'preview' }" title="仅显示预览区" @click="selectViewMode('preview')"><Eye :size="15" /><span>预览</span></button>
         </div>
+        <button class="icon-button" :disabled="!activePath" title="沉浸阅读" @click="enterImmersiveMode"><Maximize2 :size="16" /></button>
         <span class="topbar-divider" />
         <UiPopover v-model="exportOpen" width="230px">
           <template #trigger><button class="toolbar-button export-trigger" :disabled="!activePath" title="导出" @click="activePath && (exportOpen = !exportOpen)"><Download :size="17" /><span>导出</span><ChevronDown class="export-chevron" :size="13" /></button></template>
@@ -1227,9 +1345,9 @@ onBeforeUnmount(() => {
           <span>直接打开一个本地文件，或浏览目录中的 Markdown 文档。</span>
         </div>
         <div class="empty-workspace-actions">
-          <UiButton variant="primary" @click="openMarkdownFiles"><FileText :size="16" />打开本地文件</UiButton>
+          <UiButton variant="primary" @click="newFileOpen = true"><FilePlus2 :size="16" />新建文件</UiButton>
+          <UiButton variant="secondary" @click="openMarkdownFiles"><FileText :size="16" />打开本地文件</UiButton>
           <UiButton variant="secondary" @click="openLocalDirectory"><FolderOpen :size="16" />打开本地目录</UiButton>
-          <UiButton v-if="isDemo" variant="secondary" @click="selectWorkspaceBackup"><ArchiveRestore :size="16" />导入备份</UiButton>
         </div>
       </div>
     </main>
@@ -1376,5 +1494,53 @@ onBeforeUnmount(() => {
       </div>
     </Transition>
     <div v-if="errorMessage" class="error-toast"><span>{{ errorMessage }}</span><button @click="store.dismissError"><X :size="15" /></button></div>
+
+    <Teleport to="body">
+      <Transition name="immersive-fade">
+        <div v-if="immersiveMode && activePath" class="immersive-view" :class="`paper-${settings.immersivePaper}`">
+          <div class="immersive-rail">
+            <button :class="{ active: immersiveSidePanel === 'outline' }" title="章节目录" @click="toggleImmersivePanel('outline')"><Hash :size="17" /></button>
+            <button :class="{ active: immersiveSidePanel === 'files' }" title="文件列表" @click="toggleImmersivePanel('files')"><FileText :size="17" /></button>
+            <span class="rail-spacer" />
+            <div class="rail-paper-group">
+              <button v-for="p in paperOptions" :key="p.value" class="rail-paper-dot" :class="[`dot-${p.value}`, { active: settings.immersivePaper === p.value }]" :title="p.label" @click="settings.immersivePaper = p.value" />
+            </div>
+            <span class="rail-spacer" />
+            <button class="rail-exit" title="退出沉浸模式 (Esc)" @click="exitImmersiveMode"><X :size="17" /></button>
+            <Transition name="immersive-panel">
+              <div v-if="immersiveSidePanel" class="immersive-side">
+                <div v-if="immersiveSidePanel === 'outline'" class="immersive-panel-body">
+                  <div class="immersive-panel-head"><strong>章节目录</strong><button @click="immersiveSidePanel = ''"><X :size="15" /></button></div>
+                  <div class="immersive-panel-scroll">
+                    <button v-for="heading in headings" :key="heading.id" :class="{ major: heading.level <= 2 }" :style="{ paddingLeft: `${10 + (heading.level - 1) * 14}px` }" @click="goToReaderHeading(heading)">{{ heading.text }}</button>
+                    <div v-if="!headings.length" class="immersive-panel-empty">添加标题后会显示在这里</div>
+                  </div>
+                </div>
+                <div v-if="immersiveSidePanel === 'files'" class="immersive-panel-body">
+                  <div class="immersive-panel-head"><strong>文件列表</strong><button @click="immersiveSidePanel = ''"><X :size="15" /></button></div>
+                  <div class="immersive-panel-scroll">
+                    <button v-for="file in sortedTree.filter(n => n.kind === 'file')" :key="file.relativePath" :class="{ active: file.relativePath === activePath }" @click="immersiveOpenFile(file)"><FileText :size="14" /><span>{{ file.name }}</span></button>
+                    <div v-if="!sortedTree.length" class="immersive-panel-empty">暂无文件</div>
+                  </div>
+                </div>
+              </div>
+            </Transition>
+          </div>
+          <div class="immersive-reader" ref="readerRef" @click="handleReaderClick">
+            <div class="reader-clip">
+              <div class="reader-flow" ref="readerFlowRef">
+                <MarkdownPreview :content="content" :font-size="settings.fontSize" :document-path="activePath" :code-block-mode="settings.codeBlockMode" :code-block-max-height="settings.codeBlockMaxHeight" :code-theme="settings.codeTheme" :code-wrap-mode="settings.codeWrapMode" @update:content="content = $event" />
+              </div>
+            </div>
+          </div>
+          <div class="reader-footer">
+            <button class="reader-nav-btn" :disabled="readerPage <= 0" @click.stop="readerPrev"><ChevronLeft :size="15" /></button>
+            <input class="reader-slider" type="range" min="1" :max="readerTotalPages" :value="readerPage + 1" @input="jumpToPage" @click.stop />
+            <span class="reader-page-num">{{ readerPage + 1 }} / {{ readerTotalPages }}</span>
+            <button class="reader-nav-btn" :disabled="readerPage >= readerTotalPages - 1" @click.stop="readerNext"><ChevronRight :size="15" /></button>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>

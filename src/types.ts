@@ -53,4 +53,6 @@ export type AppSettings = {
   splitRatio: number
   leftSidebarWidth: number
   rightSidebarWidth: number
+  immersivePageWidth: number
+  immersivePaper: 'white' | 'warm' | 'parchment' | 'dark'
 }
