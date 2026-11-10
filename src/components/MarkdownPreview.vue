@@ -44,7 +44,7 @@ let pendingPresentationContent = ''
 let imageSizeDrag: { handle: HTMLElement; frame: HTMLElement; source: string; pointerId: number; width: number; startX: number; startWidth: number; availableWidth: number; side: 'left' | 'right'; centered: boolean } | undefined
 let jumpTimer: number | undefined
 let assetGeneration = 0
-let columnResizeDrag: { table: HTMLTableElement; cells: HTMLElement[]; colIndex: number; startX: number; startWidths: number[] } | undefined
+let columnResizeDrag: { col: HTMLElement; startX: number; startWidth: number; table: HTMLTableElement; cols: HTMLElement[]; sourceLine: number; wrapper: HTMLElement } | undefined
 
 hljs.registerLanguage('bash', bash)
 hljs.registerLanguage('css', css)
@@ -251,13 +251,10 @@ function readTableWidths(sourceLine: number): number[] | undefined {
   return match[1].split(',').map((s) => parseFloat(s.trim())).filter((w) => w > 0)
 }
 
-function saveTableWidths(table: HTMLTableElement, cells: HTMLElement[]) {
-  const sourceLine = Number(table.dataset.sourceLine)
+function saveColWidths(sourceLine: number, cols: HTMLElement[], containerWidth: number) {
   if (!sourceLine) return
-  const tableWidth = table.offsetWidth
-  const widths = cells.map((c) => Math.round((c.offsetWidth / tableWidth) * 100))
-  widths[widths.length - 1] += 100 - widths.reduce((a, b) => a + b, 0)
-  const comment = `<!-- madang-table: ${widths.join(',')} -->`
+  const pcts = cols.map((c) => Math.round((parseFloat(c.style.width) / containerWidth) * 100))
+  const comment = `<!-- madang-table: ${pcts.join(',')} -->`
   const lines = props.content.split('\n')
   const lineIndex = sourceLine - 1
   if (lineIndex > 0 && /^\s*<!--\s*madang-table:/.test(lines[lineIndex - 1])) {
@@ -274,47 +271,67 @@ function setupTableResize() {
   article.value.querySelectorAll<HTMLTableElement>('table').forEach((table) => {
     const headerRow = table.querySelector('tr')
     if (!headerRow) return
-    const cells = [...headerRow.querySelectorAll<HTMLElement>('th, td')]
-    if (cells.length < 2) return
+    const headerCells = [...headerRow.querySelectorAll<HTMLElement>('th, td')]
+    if (headerCells.length < 2) return
 
+    const colCount = headerCells.length
     const sourceLine = Number(table.dataset.sourceLine)
     const savedWidths = readTableWidths(sourceLine)
-    if (savedWidths && savedWidths.length === cells.length) {
-      table.style.tableLayout = 'fixed'
-      cells.forEach((c, i) => { c.style.width = `${savedWidths[i]}%` })
-    }
 
-    cells.slice(0, -1).forEach((cell, index) => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'table-wrapper'
+    table.parentElement!.insertBefore(wrapper, table)
+    wrapper.appendChild(table)
+
+    const colgroup = document.createElement('colgroup')
+    let totalPct = 100
+    if (savedWidths && savedWidths.length === colCount) {
+      totalPct = savedWidths.reduce((a, b) => a + b, 0)
+      savedWidths.forEach((pct) => {
+        const col = document.createElement('col')
+        col.style.width = `${(pct / totalPct * 100).toFixed(2)}%`
+        colgroup.appendChild(col)
+      })
+    } else {
+      const equalPct = `${(100 / colCount).toFixed(4)}%`
+      for (let i = 0; i < colCount; i++) {
+        const col = document.createElement('col')
+        col.style.width = equalPct
+        colgroup.appendChild(col)
+      }
+    }
+    table.insertBefore(colgroup, table.firstChild)
+    table.style.tableLayout = 'fixed'
+    table.style.width = `${Math.max(100, totalPct)}%`
+
+    const cols = [...colgroup.querySelectorAll<HTMLElement>('col')]
+
+    headerCells.slice(0, -1).forEach((cell, index) => {
       cell.style.position = 'relative'
       const handle = document.createElement('span')
       handle.className = 'table-col-resize'
       handle.addEventListener('pointerdown', (e) => {
         e.preventDefault()
         e.stopPropagation()
-        if (!table.style.tableLayout) {
-          const tableWidth = table.offsetWidth
-          cells.forEach((c) => { c.style.width = `${(c.offsetWidth / tableWidth) * 100}%` })
-          table.style.tableLayout = 'fixed'
-        }
-        columnResizeDrag = { table, cells, colIndex: index, startX: e.clientX, startWidths: cells.map((c) => c.offsetWidth) }
         handle.setPointerCapture(e.pointerId)
         table.classList.add('resizing-columns')
+        const wrapperW = wrapper.clientWidth
+        cols.forEach((c, i) => { c.style.width = `${headerCells[i].offsetWidth}px` })
+        table.style.width = `${Math.max(table.offsetWidth, wrapperW)}px`
+        columnResizeDrag = { col: cols[index], startX: e.clientX, startWidth: headerCells[index].offsetWidth, table, cols, sourceLine, wrapper }
       })
       handle.addEventListener('pointermove', (e) => {
         if (!columnResizeDrag) return
         const delta = e.clientX - columnResizeDrag.startX
-        const tableWidth = columnResizeDrag.table.offsetWidth
-        const leftWidth = Math.max(40, columnResizeDrag.startWidths[columnResizeDrag.colIndex] + delta)
-        const rightWidth = Math.max(40, columnResizeDrag.startWidths[columnResizeDrag.colIndex + 1] - delta)
-        columnResizeDrag.cells[columnResizeDrag.colIndex].style.width = `${(leftWidth / tableWidth) * 100}%`
-        columnResizeDrag.cells[columnResizeDrag.colIndex + 1].style.width = `${(rightWidth / tableWidth) * 100}%`
+        columnResizeDrag.col.style.width = `${Math.max(60, columnResizeDrag.startWidth + delta)}px`
+        const total = cols.reduce((sum, c) => sum + parseFloat(c.style.width), 0)
+        table.style.width = `${Math.max(total, columnResizeDrag.wrapper.clientWidth)}px`
       })
       handle.addEventListener('pointerup', () => {
-        if (columnResizeDrag) {
-          saveTableWidths(columnResizeDrag.table, columnResizeDrag.cells)
-          columnResizeDrag.table.classList.remove('resizing-columns')
-          columnResizeDrag = undefined
-        }
+        if (!columnResizeDrag) return
+        columnResizeDrag.table.classList.remove('resizing-columns')
+        saveColWidths(columnResizeDrag.sourceLine, columnResizeDrag.cols, columnResizeDrag.wrapper.clientWidth)
+        columnResizeDrag = undefined
       })
       cell.appendChild(handle)
     })
@@ -684,8 +701,9 @@ onBeforeUnmount(() => {
 .markdown-body .task-checkbox { width: 15px; height: 15px; margin: 0 8px 0 -23px; border: 1px solid var(--border-strong); border-radius: 3px; appearance: none; background: var(--bg-panel); vertical-align: -2px; cursor: pointer; transition: border-color 140ms ease, background-color 140ms ease; }
 .markdown-body .task-checkbox:hover { border-color: var(--accent); }
 .markdown-body .task-checkbox:checked { border-color: var(--accent); background-color: var(--accent); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='white' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m4 8 2.5 2.5L12 5'/%3E%3C/svg%3E"); }
-.markdown-body table { width: 100%; margin: 16px 0; border-collapse: separate; border-spacing: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; font-size: .933em; }
-.markdown-body th, .markdown-body td { padding: 9px 12px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); text-align: left; }
+.markdown-body .table-wrapper { margin: 16px 0; overflow-x: auto; border: 1px solid var(--border); border-radius: 7px; scrollbar-width: thin; }
+.markdown-body table { border-collapse: separate; border-spacing: 0; font-size: .933em; }
+.markdown-body th, .markdown-body td { padding: 9px 12px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); text-align: left; word-break: break-word; }
 .markdown-body th:last-child, .markdown-body td:last-child { border-right: 0; }
 .markdown-body tr:last-child td { border-bottom: 0; }
 .markdown-body th { position: relative; background: var(--bg-subtle); font-weight: 650; }

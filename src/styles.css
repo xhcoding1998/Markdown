@@ -624,7 +624,8 @@ body:has(.desktop-shell:not(.window-maximized)) .ui-modal-backdrop { inset: 8px;
 .reader-flow .markdown-body th { background: var(--paper-surface); font-weight: 600; }
 .reader-flow .markdown-body tr:nth-child(2n) td { background: color-mix(in srgb, var(--paper-surface) 40%, transparent); }
 .reader-flow .markdown-body :not(pre) > code { background: color-mix(in srgb, var(--paper-text) 7%, transparent); color: var(--paper-text); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
-.reader-flow .markdown-body table { max-width: 100%; border-color: var(--paper-border); table-layout: auto; overflow: hidden; border-radius: 6px; border-collapse: separate; border-spacing: 0; }
+.reader-flow .markdown-body .table-wrapper { border-color: var(--paper-border); border-radius: 6px; }
+.reader-flow .markdown-body table { border-color: var(--paper-border); }
 .reader-flow .markdown-body hr { border: none; height: 1px; background: var(--paper-border); margin: 24px 0; }
 .reader-flow .markdown-body pre.hljs { max-width: 100%; overflow-x: auto; border-radius: 8px; font-size: .88em; }
 .reader-flow .markdown-body .code-block { max-width: 100%; overflow: hidden; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
